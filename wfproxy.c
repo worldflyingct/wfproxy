@@ -2,15 +2,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <sys/ioctl.h>
 #include <string.h>
 #include <errno.h>
-// 包入tun相关的头部
-#include <net/if.h>
-#include <linux/if_tun.h>
 // 包入网络相关的头部
 #include <netdb.h>
-#include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <sys/epoll.h>
 
@@ -363,7 +358,6 @@ int readdata (struct FDCLIENT *fdclient) {
                 printf("read error, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
                 perror("err");
                 removeclient(fdclient);
-                exit(0);
             }
             return -1;
         }
@@ -373,7 +367,6 @@ int readdata (struct FDCLIENT *fdclient) {
                 printf("write error, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
                 perror("err");
                 removeclient(fdclient);
-                exit(0);
             }
             return -2;
         }
@@ -384,7 +377,6 @@ int readdata (struct FDCLIENT *fdclient) {
                 printf("read error, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
                 perror("err");
                 removeclient(fdclient);
-                exit(0);
             }
             return -3;
         }
@@ -487,7 +479,6 @@ int main (int argc, char *argv[]) {
                             printf("read error, errno:%d, in %s, at %d\n", errno,  __FILE__, __LINE__);
                             perror("err");
                             removeclient(fdclient);
-                            exit(0);
                         }
                         continue;
                     }
