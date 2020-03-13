@@ -8,6 +8,8 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <sys/epoll.h>
+// 包入自定义头部
+#include "wfhttp.h"
 
 #define MAX_EVENT             1024
 #define MAX_CONNECT           51200
@@ -18,8 +20,12 @@ enum STATUS {
     FDOK,                     // 可读可写
     FDSOCKSUNREGISTER,        // socks刚连接上来，未注册完成
     FDSOCKSREGISTER,          // socks已注册，等待需要连接的对端连接成功
-    FDCLIENTUNREADY,          // 客户端等待连接成功
-    FDSOCKSUNREADY            // socks等待对方ready
+    FDCLIENTUNREADY,          // socks客户端等待连接成功
+    FDSOCKSUNREADY,           // socks等待对方ready
+    FDHTTPUNREADY,            // http等待对方ready
+    FDHTTPUNREGISTER,         // http刚连接上来，未注册完成
+    FDHTTPCLIENTUNREADY,      // http一般模式客户端未连接成功
+    FDCONNECTIONUNREADY       // http直连模式客户端未连接成功
 };
 
 enum HOSTTYPE {
@@ -30,13 +36,18 @@ enum HOSTTYPE {
 
 struct FDCLIENT {
     int fd;
-    int targetfd;
     enum STATUS status;
-    struct FDCLIENT* targetclient; // 正常使用时指向对端的client对象，remainclientlist中时指向下一个可用的clientlist
+    struct FDCLIENT* targetclient; // 正常使用时指向对端的client对象，remainclientlist中时指向下一个可用的clientlist,
+    int canwrite;
+    unsigned char *data;
+    int usesize;
+    int fullsize;
 };
 struct FDCLIENT *remainfdclienthead = NULL;
 struct FDCLIENT *socksclient;
+struct FDCLIENT *httpclient;
 int epollfd;
+int httpport = 1080;
 int socksport = 1081;
 
 int setnonblocking (int fd) {
@@ -64,6 +75,74 @@ int modepoll (struct FDCLIENT *fdclient, int flags) {
     ev.data.ptr = fdclient;
     ev.events = EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP | flags; // 水平触发，保证所有数据都能读到
     return epoll_ctl(epollfd, EPOLL_CTL_MOD, fdclient->fd, &ev);
+}
+
+int addclientdata (struct FDCLIENT *fdclient, unsigned int size) {
+    int totalsize = fdclient->usesize + size;
+    if (fdclient->fullsize < totalsize) {
+        if (fdclient->data) {
+            free(fdclient->data);
+        }
+        fdclient->data = (unsigned char*)malloc(totalsize);
+        if (fdclient->data == NULL) {
+            printf("malloc new fdclient data fail, fd:%d, in %s, at %d\n", fdclient->fd,  __FILE__, __LINE__);
+            return -1;
+        }
+        fdclient->fullsize = totalsize;
+    }
+    return 0;
+}
+
+int create_http_socketfd () {
+    if (httpport == 0) {
+        printf("http proxy is disabled, in %s, at %d\n", __FILE__, __LINE__);
+        return 0;
+    }
+    struct sockaddr_in sin;
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        printf("run socket function is fail, fd:%d, in %s, at %d\n", fd, __FILE__, __LINE__);
+        return -1;
+    }
+    memset(&sin, 0, sizeof(struct sockaddr_in));
+    sin.sin_family = AF_INET; // ipv4
+    sin.sin_addr.s_addr = INADDR_ANY; // 本机任意ip
+    sin.sin_port = htons(httpport);
+    if (bind(fd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
+        printf("bind port %d fail, fd:%d, in %s, at %d\n", httpport, fd, __FILE__, __LINE__);
+        close(fd);
+        return -2;
+    }
+    if (listen(fd, MAX_CONNECT) < 0) {
+        printf("listen port %d fail, fd:%d, in %s, at %d\n", httpport, fd, __FILE__, __LINE__);
+        close(fd);
+        return -3;
+    }
+    if (remainfdclienthead) {
+        httpclient = remainfdclienthead;
+        remainfdclienthead = remainfdclienthead->targetclient;
+    } else {
+        httpclient = (struct FDCLIENT*) malloc(sizeof(struct FDCLIENT));
+        if (httpclient == NULL) {
+            printf("malloc fail, fd:%d, in %s, at %d\n", fd,  __FILE__, __LINE__);
+            close(fd);
+            return -4;
+        }
+        httpclient->data = NULL;
+        httpclient->fullsize = 0;
+    }
+    httpclient->fd = fd;
+    httpclient->status = FDOK;
+    httpclient->targetclient = NULL;
+    httpclient->usesize = 0;
+    httpclient->canwrite = 1;
+    if (addtoepoll(httpclient, 0)) {
+        printf("socks server fd add to epoll fail, fd:%d, in %s, at %d\n", fd,  __FILE__, __LINE__);
+        httpclient->targetclient = remainfdclienthead;
+        remainfdclienthead = httpclient;
+        return -5;
+    }
+    return 0;
 }
 
 int create_socks_socketfd () {
@@ -101,11 +180,14 @@ int create_socks_socketfd () {
             close(fd);
             return -4;
         }
+        socksclient->data = NULL;
+        socksclient->fullsize = 0;
     }
     socksclient->fd = fd;
-    socksclient->targetfd = 0;
     socksclient->status = FDOK;
     socksclient->targetclient = NULL;
+    socksclient->usesize = 0;
+    socksclient->canwrite = 1;
     if (addtoepoll(socksclient, 0)) {
         printf("socks server fd add to epoll fail, fd:%d, in %s, at %d\n", fd,  __FILE__, __LINE__);
         socksclient->targetclient = remainfdclienthead;
@@ -126,21 +208,19 @@ int removeclient (struct FDCLIENT *fdclient) {
     }
     close(fdclient->fd);
     fdclient->status = FDCLOSE;
-    if (fdclient->targetfd) {
-        if (epoll_ctl(epollfd, EPOLL_CTL_DEL, fdclient->targetfd, &ev)) {
-            printf("remove fail, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno, __FILE__, __LINE__);
+    struct FDCLIENT* targetclient = fdclient->targetclient;
+    fdclient->targetclient = remainfdclienthead;
+    remainfdclienthead = fdclient;
+    if (targetclient) {
+        if (epoll_ctl(epollfd, EPOLL_CTL_DEL, targetclient->fd, &ev)) {
+            printf("remove fail, fd:%d, errno:%d, in %s, at %d\n", targetclient->fd, errno, __FILE__, __LINE__);
             perror("err");
         }
-        close(fdclient->targetfd);
-        fdclient->targetclient->status = FDCLOSE;
-    }
-    struct FDCLIENT* targetclient = fdclient->targetclient;
-    if (targetclient) {
+        close(targetclient->fd);
+        targetclient->status = FDCLOSE;
         targetclient->targetclient = remainfdclienthead;
         remainfdclienthead = targetclient;
     }
-    fdclient->targetclient = remainfdclienthead;
-    remainfdclienthead = fdclient;
 }
 
 int change_socket_opt (int fd) { // 修改发送缓冲区大小
@@ -217,11 +297,11 @@ int change_socket_opt (int fd) { // 修改发送缓冲区大小
     return 0;
 }
 
-int addsocksclient () {
-    int socksfd = socksclient->fd;
+int addclient (struct FDCLIENT *listenclient, enum STATUS status) {
+    int listenfd = listenclient->fd;
     struct sockaddr_in sin;
     socklen_t in_addr_len = sizeof(struct sockaddr_in);
-    int fd = accept(socksfd, (struct sockaddr*)&sin, &in_addr_len);
+    int fd = accept(listenfd, (struct sockaddr*)&sin, &in_addr_len);
     if (fd < 0) {
         printf("accept a new fd fail, fd:%d, in %s, at %d\n", fd,  __FILE__, __LINE__);
         return -1;
@@ -242,11 +322,14 @@ int addsocksclient () {
             close(fd);
             return -3;
         }
+        fdclient->data = NULL;
+        fdclient->fullsize = 0;
     }
     fdclient->fd = fd;
-    fdclient->targetfd = 0;
-    fdclient->status = FDSOCKSUNREGISTER;
+    fdclient->status = status;
     fdclient->targetclient = NULL;
+    fdclient->usesize = 0;
+    fdclient->canwrite = 1;
     if (addtoepoll(fdclient, 0)) {
         printf("add to epoll fail, fd:%d, in %s, at %d\n", fd,  __FILE__, __LINE__);
         removeclient(fdclient);
@@ -349,71 +432,79 @@ int connect_client (enum HOSTTYPE type, unsigned char *host, unsigned short port
     return targetfd;
 }
 
-int readdata (struct FDCLIENT *fdclient) {
-    static unsigned char readbuf[MAXDATASIZE];
-    if (fdclient->status == FDOK) {
-        ssize_t len = read(fdclient->fd, readbuf, sizeof(readbuf));
-        if (len < 0) {
-            if (errno != 11) {
-                printf("read error, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
-                perror("err");
-                removeclient(fdclient);
-            }
-            return -1;
-        }
-        len = write(fdclient->targetfd, readbuf, len);
+int writenode (struct FDCLIENT *fdclient) {
+    ssize_t len = write(fdclient->fd, fdclient->data, fdclient->usesize);
+    if (len < fdclient->usesize) {
         if (len < 0) {
             if (errno != 11) {
                 printf("write error, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
                 perror("err");
                 removeclient(fdclient);
             }
+            return -1;
+        }
+        int remainsize = fdclient->usesize - len;
+        for (int i = 0 ; i < remainsize ; i++) {
+            fdclient->data[i] = fdclient->data[i+len];
+        }
+        fdclient->usesize = remainsize;
+        if (fdclient->canwrite) {
+            fdclient->canwrite = 0;
+            if (modepoll(fdclient, EPOLLOUT)) {
+                printf("change epoll status fail, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
+                perror("err");
+                removeclient(fdclient);
+            }
+        }
+    } else {
+        fdclient->usesize = 0;
+        if (!fdclient->canwrite) {
+            fdclient->canwrite = 1;
+            if (modepoll(fdclient, 0)) {
+                printf("change epoll status fail, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
+                perror("err");
+                removeclient(fdclient);
+            }
+        }
+    }
+    return 0;
+}
+
+int readdata (struct FDCLIENT *fdclient) {
+    static unsigned char readbuf[MAXDATASIZE];
+    ssize_t len = read(fdclient->fd, readbuf, sizeof(readbuf));
+    if (len < 0) {
+        if (errno != 11) {
+            printf("read error, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
+            perror("err");
+            removeclient(fdclient);
+        }
+        return -1;
+    }
+    if (fdclient->status == FDOK) {
+        struct FDCLIENT *targetclient = fdclient->targetclient;
+        if (addclientdata(targetclient, len)) {
+            removeclient(targetclient);
             return -2;
         }
-    } else if (fdclient->status == FDSOCKSUNREGISTER) {
-        ssize_t len = read(fdclient->fd, readbuf, sizeof(readbuf));
-        if (len < 0) {
-            if (errno != 11) {
-                printf("read error, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
-                perror("err");
-                removeclient(fdclient);
-            }
-            return -3;
+        memcpy(targetclient->data + targetclient->usesize, readbuf, len);
+        targetclient->usesize += len;
+        if (targetclient->canwrite) {
+            writenode(targetclient);
         }
-        if (readbuf[0] == 0x05) { // 这里只处理socks5，不处理其他socks版本
-            unsigned char data[] = {0x05, 0x00};
-            len = write (fdclient->fd, data, sizeof(data)); // 直接返回成功，校验其他内容。
-            if (len < 0) {
-                if (errno != 11) {
-                    printf("read error, errno:%d, in %s, at %d\n", errno,  __FILE__, __LINE__);
-                    perror("err");
-                    removeclient(fdclient);
-                }
-                return -4;
-            }
-            fdclient->status = FDSOCKSREGISTER; // 进入接收目的地址与端口的状态
-        }
-    } else if (fdclient->status == FDSOCKSREGISTER) {
-        char host[256];
-        ssize_t len = read(fdclient->fd, readbuf, sizeof(readbuf));
-        if (len < 0) {
-            if (errno != 11) {
-                printf("read error, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
-                perror("err");
-                removeclient(fdclient);
-            }
-            return -5;
-        }
-        int targetfd;
-        switch (readbuf[3]) {
-            case 0x01: targetfd = connect_client(IPv4, readbuf + 4, (((unsigned short)readbuf[len-2]<<8) + (unsigned short)readbuf[len-1]), 4);break;
-            case 0x03: targetfd = connect_client(DOMAIN, readbuf + 5, (((unsigned short)readbuf[len-2]<<8) + (unsigned short)readbuf[len-1]), readbuf[4]);break;
-            case 0x04: targetfd = connect_client(IPv6, readbuf + 4, (((unsigned short)readbuf[len-2]<<8) + (unsigned short)readbuf[len-1]), 16);break;
-        }
+    } else if (fdclient->status == FDHTTPUNREGISTER) {
+        static unsigned char newheader[MAXDATASIZE];
+        static unsigned char host[256];
+        unsigned short port;
+        unsigned int host_len;
+        int isconnect;
+        unsigned int oldheader_len;
+        unsigned int newheader_len = parsehttpheader(readbuf, newheader, host, &host_len, &port, &isconnect, &oldheader_len);
+        int targetfd = connect_client(DOMAIN, host, port, host_len);
         if (targetfd < 0) {
             printf("connect client error, in %s, at %d\n",  __FILE__, __LINE__);
             removeclient(fdclient);
-            return -6;
+            return -3;
         }
         struct FDCLIENT *targetclient;
         if (remainfdclienthead) { // 有存货，直接拿出来用
@@ -425,19 +516,85 @@ int readdata (struct FDCLIENT *fdclient) {
                 printf("malloc new fdclient object fail, fd:%d, in %s, at %d\n", targetfd,  __FILE__, __LINE__);
                 close(targetfd);
                 removeclient(fdclient);
-                return -7;
+                return -4;
             }
+            targetclient->data = NULL;
+            targetclient->fullsize = 0;
         }
         targetclient->fd = targetfd;
-        targetclient->targetfd = fdclient->fd;
-        targetclient->status = FDCLIENTUNREADY;
         targetclient->targetclient = fdclient;
-        fdclient->targetfd = targetfd;
+        targetclient->usesize = 0;
         fdclient->targetclient = targetclient;
+        if (isconnect == 1) {
+            targetclient->status = FDCONNECTIONUNREADY;
+        } else {
+            targetclient->status = FDHTTPCLIENTUNREADY;
+            unsigned int usesize = newheader_len + len - oldheader_len;
+            if (addclientdata(targetclient, usesize)) {
+                return -5;
+            }
+            memcpy(targetclient->data + targetclient->usesize, newheader, newheader_len);
+            memcpy(targetclient->data + targetclient->usesize + newheader_len, readbuf + oldheader_len, len - oldheader_len);
+            targetclient->usesize += usesize;
+        }
+        targetclient->canwrite = 0;
         if (addtoepoll(targetclient, EPOLLOUT)) {
             printf("add to epoll fail, fd:%d, in %s, at %d\n", targetfd,  __FILE__, __LINE__);
             removeclient(fdclient);
+            return -6;
+        }
+        fdclient->status = FDHTTPUNREADY; // 成功获取到目的地址，等待连接目的端成功
+    } else if (fdclient->status == FDSOCKSUNREGISTER) {
+        if (readbuf[0] == 0x05) { // 这里只处理socks5，不处理其他socks版本
+            unsigned char data[] = {0x05, 0x00};
+            if (addclientdata(fdclient, sizeof(data))) {
+                return -7;
+            }
+            memcpy(fdclient->data + fdclient->usesize, data, sizeof(data));
+            fdclient->usesize += sizeof(data);
+            if (fdclient->canwrite) {
+                writenode(fdclient);
+            }
+            fdclient->status = FDSOCKSREGISTER; // 进入接收目的地址与端口的状态
+        }
+    } else if (fdclient->status == FDSOCKSREGISTER) {
+        static char host[256];
+        int targetfd;
+        switch (readbuf[3]) {
+            case 0x01: targetfd = connect_client(IPv4, readbuf + 4, (((unsigned short)readbuf[len-2]<<8) + (unsigned short)readbuf[len-1]), 4);break;
+            case 0x03: targetfd = connect_client(DOMAIN, readbuf + 5, (((unsigned short)readbuf[len-2]<<8) + (unsigned short)readbuf[len-1]), readbuf[4]);break;
+            case 0x04: targetfd = connect_client(IPv6, readbuf + 4, (((unsigned short)readbuf[len-2]<<8) + (unsigned short)readbuf[len-1]), 16);break;
+        }
+        if (targetfd < 0) {
+            printf("connect client error, in %s, at %d\n",  __FILE__, __LINE__);
+            removeclient(fdclient);
             return -8;
+        }
+        struct FDCLIENT *targetclient;
+        if (remainfdclienthead) { // 有存货，直接拿出来用
+            targetclient = remainfdclienthead;
+            remainfdclienthead = remainfdclienthead->targetclient;
+        } else { // 没有存货，malloc一个
+            targetclient = (struct FDCLIENT*) malloc(sizeof(struct FDCLIENT));
+            if (targetclient == NULL) {
+                printf("malloc new fdclient object fail, fd:%d, in %s, at %d\n", targetfd,  __FILE__, __LINE__);
+                close(targetfd);
+                removeclient(fdclient);
+                return -9;
+            }
+            targetclient->data = NULL;
+            targetclient->fullsize = 0;
+        }
+        targetclient->fd = targetfd;
+        targetclient->status = FDCLIENTUNREADY;
+        targetclient->targetclient = fdclient;
+        targetclient->usesize = 0;
+        fdclient->targetclient = targetclient;
+        targetclient->canwrite = 0;
+        if (addtoepoll(targetclient, EPOLLOUT)) {
+            printf("add to epoll fail, fd:%d, in %s, at %d\n", targetfd,  __FILE__, __LINE__);
+            removeclient(fdclient);
+            return -10;
         }
         fdclient->status = FDSOCKSUNREADY; // 成功获取到目的地址，等待连接目的端成功
     }
@@ -452,11 +609,16 @@ int main (int argc, char *argv[]) {
         return -1;
     }
     printf("create epoll fd success, in %s, at %d\n",  __FILE__, __LINE__);
-    if (create_socks_socketfd ()) {
-        printf("create socks fd fail, in %s, at %d\n",  __FILE__, __LINE__);
+    if (create_http_socketfd ()) {
+        printf("create http fd fail, in %s, at %d\n",  __FILE__, __LINE__);
         return -2;
     }
-    printf("init finish, in %s, at %d\n",  __FILE__, __LINE__);
+    printf("listen http port success, in %s, at %d\n",  __FILE__, __LINE__);
+    if (create_socks_socketfd ()) {
+        printf("create socks fd fail, in %s, at %d\n",  __FILE__, __LINE__);
+        return -3;
+    }
+    printf("listen socks5 port success, in %s, at %d\n",  __FILE__, __LINE__);
     while (1) {
         static struct epoll_event evs[MAX_EVENT];
         static int wait_count;
@@ -467,28 +629,58 @@ int main (int argc, char *argv[]) {
             if (events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) { // 检测到数据异常
                 removeclient(fdclient);
                 continue;
+            } else if (fdclient == httpclient) {
+                addclient(fdclient, FDHTTPUNREGISTER);
             } else if (fdclient == socksclient) {
-                addsocksclient();
+                addclient(fdclient, FDSOCKSUNREGISTER);
             } else if (events & EPOLLIN) { // 数据可读
                 readdata(fdclient);
             } else if (events & EPOLLOUT) { // 数据可写，或远端连接成功了。
                 if (fdclient->status == FDCLIENTUNREADY) {
-                    unsigned char data[] = {0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-                    if (write(fdclient->targetfd, data, sizeof(data)) < 0) {
-                        if (errno != 11) {
-                            printf("read error, errno:%d, in %s, at %d\n", errno,  __FILE__, __LINE__);
-                            perror("err");
-                            removeclient(fdclient);
-                        }
-                        continue;
-                    }
-                    if (modepoll(fdclient, 0)) { // 取消监听可写事件
-                        printf("modepoll fail, in %s, at %d\n",  __FILE__, __LINE__);
+                    fdclient->status = FDOK;
+                    struct FDCLIENT* targetclient = fdclient->targetclient;
+                    fdclient->canwrite = 1;
+                    if (modepoll(fdclient, 0)) {
+                        printf("change epoll status fail, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
+                        perror("err");
                         removeclient(fdclient);
                         continue;
                     }
+                    targetclient->status = FDOK;
+                    unsigned char data[] = {0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+                    if (addclientdata(targetclient, sizeof(data))) {
+                        continue;
+                    }
+                    memcpy(targetclient->data + targetclient->usesize, data, sizeof(data));
+                    targetclient->usesize += sizeof(data);
+                    if (targetclient->canwrite) {
+                        writenode(targetclient);
+                    }
+                } else if (fdclient->status == FDHTTPCLIENTUNREADY) {
                     fdclient->status = FDOK;
-                    fdclient->targetclient->status = FDOK;
+                    struct FDCLIENT* targetclient = fdclient->targetclient;
+                    targetclient->status = FDOK;
+                    writenode(fdclient);
+                } else if (fdclient->status == FDCONNECTIONUNREADY) {
+                    fdclient->status = FDOK;
+                    struct FDCLIENT* targetclient = fdclient->targetclient;
+                    fdclient->canwrite = 1;
+                    if (modepoll(fdclient, 0)) {
+                        printf("change epoll status fail, fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
+                        perror("err");
+                        removeclient(fdclient);
+                        continue;
+                    }
+                    targetclient->status = FDOK;
+                    unsigned char data[] = "HTTP/1.1 200 Connection established\r\n\r\n";
+                    if (addclientdata(targetclient, sizeof(data)-1)) {
+                        continue;
+                    }
+                    memcpy(targetclient->data + targetclient->usesize, data, sizeof(data)-1);
+                    targetclient->usesize += sizeof(data)-1;
+                    if (targetclient->canwrite) {
+                        writenode(targetclient);
+                    }
                 }
             } else {
                 printf("receive new event 0x%08x, in %s, at %d\n", events,  __FILE__, __LINE__);
