@@ -9,7 +9,7 @@
 #include <netinet/tcp.h>
 #include <sys/epoll.h>
 // 包入自定义头部
-#include "wfhttp.h"
+#include "wfhttpproxy.h"
 
 #define MAX_EVENT             1024
 #define MAX_CONNECT           51200
@@ -25,7 +25,8 @@ enum STATUS {
     FDHTTPUNREADY,            // http等待对方ready
     FDHTTPUNREGISTER,         // http刚连接上来，未注册完成
     FDHTTPCLIENTUNREADY,      // http一般模式客户端未连接成功
-    FDCONNECTIONUNREADY       // http直连模式客户端未连接成功
+    FDCONNECTIONUNREADY,      // http直连模式客户端未连接成功
+    FDHTTPCLIENTREADY         // http一般模式客户端连接成功
 };
 
 enum HOSTTYPE {
@@ -495,16 +496,22 @@ int readdata (struct FDCLIENT *fdclient) {
     } else if (fdclient->status == FDHTTPUNREGISTER) {
         static unsigned char newheader[MAXDATASIZE];
         static unsigned char host[256];
-        unsigned short port;
-        unsigned int host_len;
-        int isconnect;
-        unsigned int oldheader_len;
-        unsigned int newheader_len = parsehttpheader(readbuf, newheader, host, &host_len, &port, &isconnect, &oldheader_len);
+        unsigned short port = 0;
+        unsigned int host_len = 0;
+        int isconnect = 0;
+        unsigned int oldheader_len = 0;
+        unsigned int newheader_len = parsehttpproxyheader(readbuf, newheader, host, &host_len, &port, &isconnect, &oldheader_len);
+        if (newheader_len == 0 || oldheader_len == 0 || host_len == 0 || port == 0) {
+            readbuf[len-1] = '\0';
+            printf("parse http proxy header error, oldheader:%s, in %s, at %d\n", readbuf,  __FILE__, __LINE__);
+            removeclient(fdclient);
+            return -3;
+        }
         int targetfd = connect_client(DOMAIN, host, port, host_len);
         if (targetfd < 0) {
             printf("connect client error, in %s, at %d\n",  __FILE__, __LINE__);
             removeclient(fdclient);
-            return -3;
+            return -4;
         }
         struct FDCLIENT *targetclient;
         if (remainfdclienthead) { // 有存货，直接拿出来用
@@ -516,7 +523,7 @@ int readdata (struct FDCLIENT *fdclient) {
                 printf("malloc new fdclient object fail, fd:%d, in %s, at %d\n", targetfd,  __FILE__, __LINE__);
                 close(targetfd);
                 removeclient(fdclient);
-                return -4;
+                return -5;
             }
             targetclient->data = NULL;
             targetclient->fullsize = 0;
@@ -531,7 +538,7 @@ int readdata (struct FDCLIENT *fdclient) {
             targetclient->status = FDHTTPCLIENTUNREADY;
             unsigned int usesize = newheader_len + len - oldheader_len;
             if (addclientdata(targetclient, usesize)) {
-                return -5;
+                return -6;
             }
             memcpy(targetclient->data + targetclient->usesize, newheader, newheader_len);
             memcpy(targetclient->data + targetclient->usesize + newheader_len, readbuf + oldheader_len, len - oldheader_len);
@@ -541,14 +548,39 @@ int readdata (struct FDCLIENT *fdclient) {
         if (addtoepoll(targetclient, EPOLLOUT)) {
             printf("add to epoll fail, fd:%d, in %s, at %d\n", targetfd,  __FILE__, __LINE__);
             removeclient(fdclient);
-            return -6;
+            return -7;
         }
         fdclient->status = FDHTTPUNREADY; // 成功获取到目的地址，等待连接目的端成功
+    } else if (fdclient->status == FDHTTPCLIENTREADY) {
+        static unsigned char newheader[MAXDATASIZE];
+        static unsigned char host[256];
+        unsigned short port = 0;
+        unsigned int host_len = 0;
+        int isconnect = 0;
+        unsigned int oldheader_len = 0;
+        unsigned int newheader_len = parsehttpproxyheader(readbuf, newheader, host, &host_len, &port, &isconnect, &oldheader_len);
+        if (newheader_len == 0 || oldheader_len == 0 || host_len == 0 || port == 0) {
+            readbuf[len-1] = '\0';
+            printf("parse http proxy header error, oldheader:%s, in %s, at %d\n", readbuf,  __FILE__, __LINE__);
+            removeclient(fdclient);
+            return -8;
+        }
+        struct FDCLIENT *targetclient = fdclient->targetclient;
+        unsigned int usesize = newheader_len + len - oldheader_len;
+        if (addclientdata(targetclient, usesize)) {
+            return -9;
+        }
+        memcpy(targetclient->data + targetclient->usesize, newheader, newheader_len);
+        memcpy(targetclient->data + targetclient->usesize + newheader_len, readbuf + oldheader_len, len - oldheader_len);
+        targetclient->usesize += usesize;
+        if (targetclient->canwrite) {
+            writenode(targetclient);
+        }
     } else if (fdclient->status == FDSOCKSUNREGISTER) {
         if (readbuf[0] == 0x05) { // 这里只处理socks5，不处理其他socks版本
             unsigned char data[] = {0x05, 0x00};
             if (addclientdata(fdclient, sizeof(data))) {
-                return -7;
+                return -10;
             }
             memcpy(fdclient->data + fdclient->usesize, data, sizeof(data));
             fdclient->usesize += sizeof(data);
@@ -564,11 +596,15 @@ int readdata (struct FDCLIENT *fdclient) {
             case 0x01: targetfd = connect_client(IPv4, readbuf + 4, (((unsigned short)readbuf[len-2]<<8) + (unsigned short)readbuf[len-1]), 4);break;
             case 0x03: targetfd = connect_client(DOMAIN, readbuf + 5, (((unsigned short)readbuf[len-2]<<8) + (unsigned short)readbuf[len-1]), readbuf[4]);break;
             case 0x04: targetfd = connect_client(IPv6, readbuf + 4, (((unsigned short)readbuf[len-2]<<8) + (unsigned short)readbuf[len-1]), 16);break;
+            default:
+                printf("socks5 domain type is unknown, in %s, at %d\n", readbuf[3],  __FILE__, __LINE__);
+                removeclient(fdclient);
+                return -11;
         }
         if (targetfd < 0) {
             printf("connect client error, in %s, at %d\n",  __FILE__, __LINE__);
             removeclient(fdclient);
-            return -8;
+            return -12;
         }
         struct FDCLIENT *targetclient;
         if (remainfdclienthead) { // 有存货，直接拿出来用
@@ -580,7 +616,7 @@ int readdata (struct FDCLIENT *fdclient) {
                 printf("malloc new fdclient object fail, fd:%d, in %s, at %d\n", targetfd,  __FILE__, __LINE__);
                 close(targetfd);
                 removeclient(fdclient);
-                return -9;
+                return -13;
             }
             targetclient->data = NULL;
             targetclient->fullsize = 0;
@@ -594,7 +630,7 @@ int readdata (struct FDCLIENT *fdclient) {
         if (addtoepoll(targetclient, EPOLLOUT)) {
             printf("add to epoll fail, fd:%d, in %s, at %d\n", targetfd,  __FILE__, __LINE__);
             removeclient(fdclient);
-            return -10;
+            return -14;
         }
         fdclient->status = FDSOCKSUNREADY; // 成功获取到目的地址，等待连接目的端成功
     }
@@ -659,7 +695,7 @@ int main (int argc, char *argv[]) {
                 } else if (fdclient->status == FDHTTPCLIENTUNREADY) {
                     fdclient->status = FDOK;
                     struct FDCLIENT* targetclient = fdclient->targetclient;
-                    targetclient->status = FDOK;
+                    targetclient->status = FDHTTPCLIENTREADY;
                     writenode(fdclient);
                 } else if (fdclient->status == FDCONNECTIONUNREADY) {
                     fdclient->status = FDOK;

@@ -9,7 +9,15 @@ enum STATE {
     PARAMVALUE
 };
 
-unsigned int parsehttpheader (char* oldheader, char* newheader, char* host, unsigned int* host_len, unsigned short* pport, int* isconnect, unsigned int* oldheader_len) {
+unsigned int parsehttpproxyheader (char* oldheader, char* newheader, char* host, unsigned int* host_len, unsigned short* pport, int* isconnect, unsigned int* oldheader_len) {
+    if (!(memcmp(oldheader, "GET ", sizeof("GET ") - 1) ||
+            memcmp(oldheader, "POST ", sizeof("POST ") - 1) ||
+            memcmp(oldheader, "PUSH ", sizeof("PUSH ") - 1) ||
+            memcmp(oldheader, "DELETE ", sizeof("DELETE ") - 1) ||
+            memcmp(oldheader, "CONNECT ", sizeof("CONNECT ") - 1))) {
+        printf("http method is unknown\n");
+        return 0;
+    }
     unsigned short port;
     unsigned int offsetold = 0;
     unsigned int offsetnew = 0;
@@ -77,6 +85,7 @@ unsigned int parsehttpheader (char* oldheader, char* newheader, char* host, unsi
                     memcpy(newheader+offsetnew, oldheader+offsetold, len);
                     offsetnew += len;
                     offsetold += len;
+                    *oldheader_len = offsetold;
                     newheader[offsetnew] = '\0';
                     str_len = 0;
                 }
@@ -93,6 +102,5 @@ unsigned int parsehttpheader (char* oldheader, char* newheader, char* host, unsi
                 break;
         }
     }
-    *oldheader_len = offsetold;
     return offsetnew;
 }
