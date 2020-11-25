@@ -2,3 +2,4 @@
 wfproxy
 test*
 *.o
+*.exe
