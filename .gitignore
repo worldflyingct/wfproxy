@@ -3,3 +3,6 @@ wfproxy
 test*
 *.o
 *.exe
+config.json
+*.crt
+*.key

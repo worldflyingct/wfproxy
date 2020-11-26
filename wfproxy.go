@@ -1,15 +1,32 @@
 package main
 
 import (
-    "bytes"
     "log"
     "net"
     "io"
-    "net/url"
     "runtime"
-    "strings"
     "strconv"
+    "bytes"
+    "strings"
+    "net/url"
+    "crypto/tls"
+    "io/ioutil"
+    "encoding/json"
 )
+
+const defconf = "{\n" +
+                "  \"ssl\": false,\n" +
+                "  \"httphead\": false,\n" +
+                "  \"bindaddr\": \":1080\",\n" +
+                "  \"keys\": []\n" +
+                "}"
+type Config struct {
+    ssl bool
+    httphead bool
+    bindaddr string
+    keys []string
+}
+var c Config
 
 func main() {
     runtime.GOMAXPROCS(1)
@@ -17,43 +34,90 @@ func main() {
     log.SetFlags(log.LstdFlags | log.Lshortfile)
     log.Println("version: " + runtime.Version())
 
-    go HttpAccept(8888)
-    Socks5Accept(8889)
-}
-
-func Socks5Accept (port int) {
-    tcpaddr := &net.TCPAddr{
-        IP: []byte{0, 0, 0, 0},
-        Port: port,
-        Zone: "",
-    }
-    l, err := net.ListenTCP("tcp", tcpaddr)
+    f, err := ioutil.ReadFile("config.json")
     if err != nil {
-        log.Println(err)
+        ioutil.WriteFile("config.json", []byte(defconf), 0777)
+        f = []byte(defconf)
+    }
+    err = json.Unmarshal(f, &c)
+    if err != nil {
+        log.Println("配置文件读取失败")
         return
     }
-    defer l.Close()
-    for {
-        client, err := l.AcceptTCP()
+    var ln net.Listener
+    if c.ssl {
+        cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
         if err != nil {
             log.Println(err)
             return
         }
-        go Socks5Request(client)
+
+        config := &tls.Config{Certificates: []tls.Certificate{cert}}
+        ln, err = tls.Listen("tcp", c.bindaddr, config)
+        if err != nil {
+            log.Println(err)
+            return
+        }
+    } else {
+        var err error
+        ln, err = net.Listen("tcp", c.bindaddr)
+        if err != nil {
+            log.Println(err)
+            return
+        }
+    }
+    for {
+        client, err := ln.Accept()
+        if err != nil {
+            log.Println(err)
+            ln.Close()
+            return
+        }
+        go ProxyRequest(client)
     }
 }
 
-func Socks5Request (client *net.TCPConn) {
+func ProxyRequest (conn net.Conn) {
+    client, _ := conn.(*net.TCPConn)
     client.SetReadBuffer(32*1024)
     client.SetWriteBuffer(32*1024)
     b := make([]byte, 32*1024)
-    _, err := client.Read(b)
+    n, err := client.Read(b)
     if err != nil {
         log.Println(err)
         client.Close()
         return
     }
-    if b[0] == 0x05 { //只处理Socks5协议
+    if c.httphead {
+        headlen := bytes.Index(b, []byte("\r\n\r\n")) + 4
+        if headlen < 4 {
+            log.Println("未找到头部结束标志")
+            client.Close()
+            return
+        }
+        keystart := bytes.Index(b[:headlen], []byte("Authorization: ")) + 15
+        if keystart < 15 {
+            log.Println("未找到认证标志")
+            client.Close()
+            return
+        }
+        key := string(b[keystart:keystart + 32])
+        check := false
+        for _, v := range c.keys {
+            if key == v {
+                check = true
+                break
+            }
+        }
+        if check == false {
+            log.Println("key check fail!!!")
+            client.Close()
+            return
+        }
+        copy(b, b[headlen:n])
+        n -= headlen
+    }
+    if b[0] == 0x05 { //Socks5代理
         // 客户端回应：Socks服务端不需要验证方式
         _, err = client.Write([]byte{0x05, 0x00})
         if err != nil {
@@ -114,113 +178,81 @@ func Socks5Request (client *net.TCPConn) {
         }
         go IoCopy(client, server)
         go IoCopy(server, client)
-    }
-}
-
-func HttpAccept (port int) {
-    tcpaddr := &net.TCPAddr{
-        IP: []byte{0, 0, 0, 0},
-        Port: port,
-        Zone: "",
-    }
-    l, err := net.ListenTCP("tcp", tcpaddr)
-    if err != nil {
-        log.Println(err)
-    }
-    defer l.Close()
-    for {
-        client, err := l.AcceptTCP()
-        if err != nil {
-            log.Println(err)
+    } else { // http代理
+        maddr := bytes.IndexByte(b, ' ')
+        method := string(b[:maddr])
+        host := string(b[maddr+1:maddr+1+bytes.IndexByte(b[maddr+1:], ' ')])
+        if method == "CONNECT" {
+            log.Println(host)
+            tcpaddr, err := net.ResolveTCPAddr("tcp", host)
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                return
+            }
+            server, err := net.DialTCP("tcp", nil, tcpaddr)
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                return
+            }
+            server.SetReadBuffer(32*1024)
+            server.SetWriteBuffer(32*1024)
+            _, err = client.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                server.Close()
+                return
+            }
+            go IoCopy(client, server)
+            go IoCopy(server, client)
+        } else {
+            hostPortURL, err := url.Parse(host)
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                return
+            }
+            host := hostPortURL.Host
+            if strings.Index(host, ":") == -1 {
+                host += ":80"
+            }
+            log.Println(host)
+            tcpaddr, err := net.ResolveTCPAddr("tcp", host)
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                return
+            }
+            server, err := net.DialTCP("tcp", nil, tcpaddr)
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                return
+            }
+            server.SetReadBuffer(32*1024)
+            server.SetWriteBuffer(32*1024)
+            start := bytes.Index(b[:n], []byte(hostPortURL.Host)) + len(hostPortURL.Host)
+            if start != -1 {
+                copy(b[maddr+1:], b[start:])
+                n -= start - maddr - 1
+            }
+            start = bytes.Index(b[:n], []byte("Proxy-Connection:"))
+            if start != -1 {
+                copy(b[start:], b[start+6:])
+                n -= 6
+            }
+            _, err = server.Write(b[:n])
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                server.Close()
+                return
+            }
+            go IoCopy(client, server)
+            go IoCopy(server, client)
         }
-        go HttpProxyRequest(client)
-    }
-}
-
-func HttpProxyRequest (client *net.TCPConn) {
-    client.SetReadBuffer(32*1024)
-    client.SetWriteBuffer(32*1024)
-    b := make([]byte, 32*1024)
-    n, err := client.Read(b)
-    if err != nil {
-        log.Println(err)
-        client.Close()
-        return
-    }
-    maddr := bytes.IndexByte(b, ' ')
-    method := string(b[:maddr])
-    host := string(b[maddr+1:maddr+1+bytes.IndexByte(b[maddr+1:], ' ')])
-    if method == "CONNECT" {
-        log.Println(host)
-        tcpaddr, err := net.ResolveTCPAddr("tcp", host)
-        if err != nil {
-            log.Println(err)
-            client.Close()
-            return
-        }
-        server, err := net.DialTCP("tcp", nil, tcpaddr)
-        if err != nil {
-            log.Println(err)
-            client.Close()
-            return
-        }
-        server.SetReadBuffer(32*1024)
-        server.SetWriteBuffer(32*1024)
-        _, err = client.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
-        if err != nil {
-            log.Println(err)
-            client.Close()
-            server.Close()
-            return
-        }
-        go IoCopy(client, server)
-        go IoCopy(server, client)
-    } else {
-        hostPortURL, err := url.Parse(host)
-        if err != nil {
-            log.Println(err)
-            client.Close()
-            return
-        }
-        address := hostPortURL.Host
-        if strings.Index(address, ":") == -1 {
-            address = address + ":80"
-        }
-        log.Println(address)
-        tcpaddr, err := net.ResolveTCPAddr("tcp", address)
-        if err != nil {
-            log.Println(err)
-            client.Close()
-            return
-        }
-        server, err := net.DialTCP("tcp", nil, tcpaddr)
-        if err != nil {
-            log.Println(err)
-            client.Close()
-            return
-        }
-        server.SetReadBuffer(32*1024)
-        server.SetWriteBuffer(32*1024)
-        httpheadlen := bytes.Index(b, []byte("\r\n\r\n"))+4
-        httphead := b[:httpheadlen]
-        start := bytes.Index(httphead, []byte(hostPortURL.Host)) + len(hostPortURL.Host)
-        if start != -1 {
-            httphead = append(httphead[:maddr+1], httphead[start:]...)
-        }
-        start = bytes.Index(httphead, []byte("Proxy-Connection:"))
-        if start != -1 {
-            httphead = append(httphead[:start], httphead[start+6:]...)
-        }
-        b = append(httphead, b[httpheadlen:n]...)
-        _, err = server.Write(b)
-        if err != nil {
-            log.Println(err)
-            client.Close()
-            server.Close()
-            return
-        }
-        go IoCopy(client, server)
-        go IoCopy(server, client)
     }
 }
 
