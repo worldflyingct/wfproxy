@@ -54,7 +54,7 @@ func main () {
         return
     }
     if c.HttpHead {
-        auth = []byte("GET " + c.Path + " HTTP/1.1\r\nHost: " + c.ServerAddr + "\r\nConnection: Upgrade\r\nPragma: no-cache\r\nCache-Control: no-cach\r\nUpgrade: websocket\r\nAuthorization: " + c.Key + "\r\n\r\n")
+        auth = []byte("GET " + c.Path + " HTTP/1.1\r\nHost: " + c.ServerAddr + "\r\nConnection: Upgrade\r\nPragma: no-cache\r\nCache-Control: no-cache\r\nUpgrade: websocket\r\nAuthorization: " + c.Key + "\r\n\r\n")
         authlen = len(auth)
     }
     if c.ConnectMode {
