@@ -115,7 +115,6 @@ func ProxyRequest (client net.Conn) {
                 server.Close()
                 return
             }
-            log.Println(string(b[:n]))
         }
         if c.ConnectMode {
             _, err = server.Write(connproxy)
