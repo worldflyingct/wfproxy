@@ -101,7 +101,7 @@ func ProxyRequest (client net.Conn) {
                 server.Close()
                 return
             }
-            b := make([]byte, 64)
+            b := make([]byte, 32*1024)
             n, err := server.Read(b)
             if err != nil {
                 log.Println(err)
@@ -115,6 +115,7 @@ func ProxyRequest (client net.Conn) {
                 server.Close()
                 return
             }
+            log.Println(string(b[:n]))
         }
         if c.ConnectMode {
             _, err = server.Write(connproxy)
@@ -124,7 +125,7 @@ func ProxyRequest (client net.Conn) {
                 server.Close()
                 return
             }
-            b := make([]byte, 64)
+            b := make([]byte, 32*1024)
             n, err := server.Read(b)
             if err != nil {
                 log.Println(err)
@@ -132,7 +133,7 @@ func ProxyRequest (client net.Conn) {
                 server.Close()
                 return
             }
-            if string(b[:n]) != "HTTP/1.1 200 Connection established\r\n\r\n" {
+            if string(b[:37]) != "HTTP/1.1 200 Connection established\r\n" {
                 log.Println(string(b[:n]))
                 client.Close()
                 server.Close()
@@ -152,6 +153,7 @@ func ProxyRequest (client net.Conn) {
             client.Close()
             return
         }
+
         if c.HttpHead {
             _, err = server.Write(auth)
             if err != nil {
@@ -160,20 +162,21 @@ func ProxyRequest (client net.Conn) {
                 server.Close()
                 return
             }
-            b := make([]byte, 64)
-            n, err := client.Read(b)
+            b := make([]byte, 32*1024)
+            n, err := server.Read(b)
             if err != nil {
                 log.Println(err)
                 client.Close()
                 server.Close()
                 return
             }
-            if string(b[:n]) != "HTTP/1.1 200 Authorization passed\r\n\r\n" {
+            if string(b[:34]) != "HTTP/1.1 101 Switching Protocols\r\n" {
                 log.Println(string(b[:n]))
                 client.Close()
                 server.Close()
                 return
             }
+            log.Println(string(b[:n]))
         }
         if c.ConnectMode {
             _, err = server.Write(connproxy)
@@ -183,7 +186,7 @@ func ProxyRequest (client net.Conn) {
                 server.Close()
                 return
             }
-            b := make([]byte, 64)
+            b := make([]byte, 32*1024)
             n, err := server.Read(b)
             if err != nil {
                 log.Println(err)
@@ -191,7 +194,7 @@ func ProxyRequest (client net.Conn) {
                 server.Close()
                 return
             }
-            if string(b[:n]) != "HTTP/1.1 200 Connection established\r\n\r\n" {
+            if string(b[:37]) != "HTTP/1.1 200 Connection established\r\n" {
                 log.Println(string(b[:n]))
                 client.Close()
                 server.Close()
