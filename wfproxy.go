@@ -90,7 +90,7 @@ func ProxyRequest (client net.Conn) {
         return
     }
     if c.HttpHead {
-        headlen := bytes.Index(b, []byte("\r\n\r\n")) + 4
+        headlen := bytes.Index(b[:n], []byte("\r\n\r\n")) + 4
         if headlen < 4 {
             log.Println("no find end flag.")
             client.Close()
@@ -115,8 +115,18 @@ func ProxyRequest (client net.Conn) {
             client.Close()
             return
         }
-        copy(b, b[headlen:n])
-        n -= headlen
+        _, err = client.Write([]byte("HTTP/1.1 200 Authorization passed\r\n\r\n"))
+        if err != nil {
+            log.Println(err)
+            client.Close()
+            return
+        }
+    }
+    n, err = client.Read(b)
+    if err != nil {
+        log.Println(err)
+        client.Close()
+        return
     }
     if b[0] == 0x05 { //Socks5代理
         // 客户端回应：Socks服务端不需要验证方式
@@ -174,9 +184,9 @@ func ProxyRequest (client net.Conn) {
         go IoCopy(client, server)
         go IoCopy(server, client)
     } else { // http代理
-        maddr := bytes.IndexByte(b, ' ')
+        maddr := bytes.IndexByte(b[:n], ' ')
         method := string(b[:maddr])
-        host := string(b[maddr+1:maddr+1+bytes.IndexByte(b[maddr+1:], ' ')])
+        host := string(b[maddr+1:maddr+1+bytes.IndexByte(b[maddr+1:n], ' ')])
         if method == "CONNECT" {
             log.Println(host)
             server, err := net.Dial("tcp", host)

@@ -34,6 +34,8 @@ type Config struct {
 var c Config
 var auth []byte
 var authlen int
+var connproxy []byte
+var connproxylen int
 
 func main () {
     runtime.GOMAXPROCS(1)
@@ -48,18 +50,17 @@ func main () {
     }
     err = json.Unmarshal(f, &c)
     if err != nil {
-        log.Println("配置文件读取失败")
+        log.Println("config file read error!!!")
         return
     }
     if c.HttpHead {
         auth = []byte("GET " + c.Path + " HTTP/1.1\r\nHost: " + c.ServerAddr + "\r\nConnection: Upgrade\r\nAuthorization: " + c.Key + "\r\n\r\n")
-    } else {
-        auth = make([]byte, 0)
+        authlen = len(auth)
     }
     if c.ConnectMode {
-        auth = append(auth, []byte("CONNECT " + c.TargetAddr + " HTTP/1.1\r\nHost: " + c.TargetAddr + "\r\nProxy-Connection: keep-alive\r\n\r\n")...)
+        connproxy = []byte("CONNECT " + c.TargetAddr + " HTTP/1.1\r\nHost: " + c.TargetAddr + "\r\nProxy-Connection: keep-alive\r\n\r\n")
+        connproxylen = len(connproxy)
     }
-    authlen = len(auth)
 
     ln, err := net.Listen("tcp", c.BindAddr)
     if err != nil {
@@ -85,6 +86,7 @@ func ProxyRequest (client net.Conn) {
         if strings.Index(c.ServerAddr, ":") == -1 {
             c.ServerAddr += ":443"
         }
+        log.Println(c.ServerAddr)
         server, err := tls.Dial("tcp", c.ServerAddr, config)
         if err != nil {
             log.Println(err)
@@ -92,31 +94,39 @@ func ProxyRequest (client net.Conn) {
             return
         }
 
-        b := make([]byte, 32*1024)
-        if c.HttpHead || c.ConnectMode {
-            copy(b, auth)
-        }
-        var n int
-        if c.ConnectMode {
-            n = 0
-        } else {
-            n, err = client.Read(b[authlen:])
+        if c.HttpHead {
+            _, err = server.Write(auth)
             if err != nil {
                 log.Println(err)
                 client.Close()
                 server.Close()
                 return
             }
-        }
-        _, err = server.Write(b[:authlen+n])
-        if err != nil {
-            log.Println(err)
-            client.Close()
-            server.Close()
-            return
+            b := make([]byte, 64)
+            n, err := client.Read(b)
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                server.Close()
+                return
+            }
+            if string(b[:n]) != "HTTP/1.1 200 Authorization passed\r\n\r\n" {
+                log.Println(string(b[:n]))
+                client.Close()
+                server.Close()
+                return
+            }
         }
         if c.ConnectMode {
-            n, err = client.Read(b)
+            _, err = server.Write(connproxy)
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                server.Close()
+                return
+            }
+            b := make([]byte, 64)
+            n, err := server.Read(b)
             if err != nil {
                 log.Println(err)
                 client.Close()
@@ -143,31 +153,39 @@ func ProxyRequest (client net.Conn) {
             client.Close()
             return
         }
-        b := make([]byte, 32*1024)
-        if c.HttpHead || c.ConnectMode {
-            copy(b, auth)
-        }
-        var n int
-        if c.ConnectMode {
-            n = 0
-        } else {
-            n, err = client.Read(b[authlen:])
+        if c.HttpHead {
+            _, err = server.Write(auth)
             if err != nil {
                 log.Println(err)
                 client.Close()
                 server.Close()
                 return
             }
-        }
-        _, err = server.Write(b[:authlen+n])
-        if err != nil {
-            log.Println(err)
-            client.Close()
-            server.Close()
-            return
+            b := make([]byte, 64)
+            n, err := client.Read(b)
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                server.Close()
+                return
+            }
+            if string(b[:n]) != "HTTP/1.1 200 Authorization passed\r\n\r\n" {
+                log.Println(string(b[:n]))
+                client.Close()
+                server.Close()
+                return
+            }
         }
         if c.ConnectMode {
-            n, err = server.Read(b)
+            _, err = server.Write(connproxy)
+            if err != nil {
+                log.Println(err)
+                client.Close()
+                server.Close()
+                return
+            }
+            b := make([]byte, 64)
+            n, err := server.Read(b)
             if err != nil {
                 log.Println(err)
                 client.Close()
