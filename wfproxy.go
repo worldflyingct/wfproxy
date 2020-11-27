@@ -83,13 +83,15 @@ func main() {
 
 func ProxyRequest (client net.Conn) {
     b := make([]byte, 32*1024)
-    n, err := client.Read(b)
-    if err != nil {
-        log.Println(err)
-        client.Close()
-        return
-    }
+    var n int
+    var err error
     if c.HttpHead {
+        n, err = client.Read(b)
+        if err != nil {
+            log.Println(err)
+            client.Close()
+            return
+        }
         headlen := bytes.Index(b[:n], []byte("\r\n\r\n")) + 4
         if headlen < 4 {
             log.Println("no find end flag.")
