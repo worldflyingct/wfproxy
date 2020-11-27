@@ -54,7 +54,7 @@ func main () {
         return
     }
     if c.HttpHead {
-        auth = []byte("GET " + c.Path + " HTTP/1.1\r\nHost: " + c.ServerAddr + "\r\nConnection: Upgrade\r\nAuthorization: " + c.Key + "\r\n\r\n")
+        auth = []byte("GET " + c.Path + " HTTP/1.1\r\nHost: " + c.ServerAddr + "\r\nConnection: Upgrade\r\nPragma: no-cache\r\nCache-Control: no-cach\r\nUpgrade: websocket\r\nAuthorization: " + c.Key + "\r\n\r\n")
         authlen = len(auth)
     }
     if c.ConnectMode {
@@ -86,7 +86,6 @@ func ProxyRequest (client net.Conn) {
         if strings.Index(c.ServerAddr, ":") == -1 {
             c.ServerAddr += ":443"
         }
-        log.Println(c.ServerAddr)
         server, err := tls.Dial("tcp", c.ServerAddr, config)
         if err != nil {
             log.Println(err)
@@ -103,14 +102,14 @@ func ProxyRequest (client net.Conn) {
                 return
             }
             b := make([]byte, 64)
-            n, err := client.Read(b)
+            n, err := server.Read(b)
             if err != nil {
                 log.Println(err)
                 client.Close()
                 server.Close()
                 return
             }
-            if string(b[:n]) != "HTTP/1.1 200 Authorization passed\r\n\r\n" {
+            if string(b[:34]) != "HTTP/1.1 101 Switching Protocols\r\n" {
                 log.Println(string(b[:n]))
                 client.Close()
                 server.Close()

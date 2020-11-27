@@ -117,7 +117,7 @@ func ProxyRequest (client net.Conn) {
             client.Close()
             return
         }
-        _, err = client.Write([]byte("HTTP/1.1 200 Authorization passed\r\n\r\n"))
+        _, err = client.Write([]byte("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"))
         if err != nil {
             log.Println(err)
             client.Close()
