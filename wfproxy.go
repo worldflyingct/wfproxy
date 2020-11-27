@@ -16,15 +16,19 @@ import (
 
 const defconf = "{\n" +
                 "  \"ssl\": false,\n" +
-                "  \"httphead\": false,\n" +
+                "  \"crtpath\": \"server.crt\",\n" +
+                "  \"keypath\": \"server.key\",\n" +
                 "  \"bindaddr\": \":1080\",\n" +
+                "  \"httphead\": false,\n" +
                 "  \"keys\": []\n" +
                 "}"
 type Config struct {
-    ssl bool
-    httphead bool
-    bindaddr string
-    keys []string
+    Ssl bool
+    CrtPath string
+    KeyPath string
+    BindAddr string
+    HttpHead bool
+    Keys []string
 }
 var c Config
 
@@ -45,22 +49,22 @@ func main() {
         return
     }
     var ln net.Listener
-    if c.ssl {
-        cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
+    if c.Ssl {
+        cert, err := tls.LoadX509KeyPair(c.CrtPath, c.KeyPath)
         if err != nil {
             log.Println(err)
             return
         }
 
         config := &tls.Config{Certificates: []tls.Certificate{cert}}
-        ln, err = tls.Listen("tcp", c.bindaddr, config)
+        ln, err = tls.Listen("tcp", c.BindAddr, config)
         if err != nil {
             log.Println(err)
             return
         }
     } else {
         var err error
-        ln, err = net.Listen("tcp", c.bindaddr)
+        ln, err = net.Listen("tcp", c.BindAddr)
         if err != nil {
             log.Println(err)
             return
@@ -77,10 +81,7 @@ func main() {
     }
 }
 
-func ProxyRequest (conn net.Conn) {
-    client, _ := conn.(*net.TCPConn)
-    client.SetReadBuffer(32*1024)
-    client.SetWriteBuffer(32*1024)
+func ProxyRequest (client net.Conn) {
     b := make([]byte, 32*1024)
     n, err := client.Read(b)
     if err != nil {
@@ -88,22 +89,22 @@ func ProxyRequest (conn net.Conn) {
         client.Close()
         return
     }
-    if c.httphead {
+    if c.HttpHead {
         headlen := bytes.Index(b, []byte("\r\n\r\n")) + 4
         if headlen < 4 {
-            log.Println("未找到头部结束标志")
+            log.Println("no find end flag.")
             client.Close()
             return
         }
         keystart := bytes.Index(b[:headlen], []byte("Authorization: ")) + 15
         if keystart < 15 {
-            log.Println("未找到认证标志")
+            log.Println("no find auth key.")
             client.Close()
             return
         }
         key := string(b[keystart:keystart + 32])
         check := false
-        for _, v := range c.keys {
+        for _, v := range c.Keys {
             if key == v {
                 check = true
                 break
@@ -157,13 +158,7 @@ func ProxyRequest (conn net.Conn) {
         }
         address := net.JoinHostPort(host, strconv.Itoa(int(b[n-2])<<8 | int(b[n-1])))
         log.Println(address);
-        tcpaddr, err := net.ResolveTCPAddr("tcp", address)
-        if err != nil {
-            log.Println(err)
-            client.Close()
-            return
-        }
-        server, err := net.DialTCP("tcp", nil, tcpaddr)
+        server, err := net.Dial("tcp", address)
         if err != nil {
             log.Println(err)
             client.Close()
@@ -184,20 +179,12 @@ func ProxyRequest (conn net.Conn) {
         host := string(b[maddr+1:maddr+1+bytes.IndexByte(b[maddr+1:], ' ')])
         if method == "CONNECT" {
             log.Println(host)
-            tcpaddr, err := net.ResolveTCPAddr("tcp", host)
+            server, err := net.Dial("tcp", host)
             if err != nil {
                 log.Println(err)
                 client.Close()
                 return
             }
-            server, err := net.DialTCP("tcp", nil, tcpaddr)
-            if err != nil {
-                log.Println(err)
-                client.Close()
-                return
-            }
-            server.SetReadBuffer(32*1024)
-            server.SetWriteBuffer(32*1024)
             _, err = client.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
             if err != nil {
                 log.Println(err)
@@ -219,20 +206,12 @@ func ProxyRequest (conn net.Conn) {
                 host += ":80"
             }
             log.Println(host)
-            tcpaddr, err := net.ResolveTCPAddr("tcp", host)
+            server, err := net.Dial("tcp", host)
             if err != nil {
                 log.Println(err)
                 client.Close()
                 return
             }
-            server, err := net.DialTCP("tcp", nil, tcpaddr)
-            if err != nil {
-                log.Println(err)
-                client.Close()
-                return
-            }
-            server.SetReadBuffer(32*1024)
-            server.SetWriteBuffer(32*1024)
             start := bytes.Index(b[:n], []byte(hostPortURL.Host)) + len(hostPortURL.Host)
             if start != -1 {
                 copy(b[maddr+1:], b[start:])
@@ -256,7 +235,7 @@ func ProxyRequest (conn net.Conn) {
     }
 }
 
-func IoCopy(dst *net.TCPConn, src *net.TCPConn) {
+func IoCopy(dst net.Conn, src net.Conn) {
     io.Copy(dst, src)
     dst.Close()
 }
