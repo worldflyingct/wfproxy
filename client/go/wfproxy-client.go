@@ -52,12 +52,12 @@ func initconfigdata () int {
         return -2
     }
     c.Ssl = obj["ssl"].(bool)
-    c.BindPort = obj["bindport"].(int)
+    c.BindPort = int(obj["bindport"].(float64))
     c.ServerAddr = obj["serveraddr"].(string)
     c.HttpHead = obj["httphead"].(bool)
     c.ConnectMode = obj["connectmode"].(bool)
     path := obj["path"].(string)
-    key := obj["connectmode"].(string)
+    key := obj["key"].(string)
     targetaddr := obj["targetaddr"].(string)
     if c.HttpHead {
         var serveraddr string
