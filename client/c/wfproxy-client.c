@@ -43,7 +43,7 @@ struct FDCLIENT {
                 "  \"ssl\": false,\n" \
                 "  \"bindport\": 1080,\n" \
                 "  \"serveraddr\": \"proxyserver:443\",\n" \
-                "  \"httphead\": false,\n" \
+                "  \"needauth\": false,\n" \
                 "  \"path\": \"/\",\n" \
                 "  \"key\": \"D5lfC6LQ1W0BwzP9x3TsxvvdYBCFznqk\",\n" \
                 "  \"connectmode\": false,\n" \
@@ -54,7 +54,7 @@ struct CONFIG {
     unsigned short bindport;
     unsigned char serveraddrip[4];
     unsigned short serveraddrport;
-    unsigned char httphead;
+    unsigned char needauth;
     unsigned char connectmode;
 };
 struct CONFIG c;
@@ -368,7 +368,7 @@ int readdata (struct FDCLIENT* fdclient) {
 int clientstatuschange (struct FDCLIENT* fdclient) {
     switch (fdclient->status) {
         case TCPNOREADY:
-                if (c.httphead) {
+                if (c.needauth) {
                     if (writenode(fdclient, auth, authlen)) {
                         printf("write node fail, in %s, at %d\n",  __FILE__, __LINE__);
                         removeclient(fdclient);
@@ -708,9 +708,9 @@ int initconfigdata () {
         cJSON_Delete(obj);
         return -6;
     }
-    item = cJSON_GetObjectItem(obj, "httphead");
-    c.httphead = cJSON_IsTrue(item);
-    if (c.httphead) {
+    item = cJSON_GetObjectItem(obj, "needauth");
+    c.needauth = cJSON_IsTrue(item);
+    if (c.needauth) {
         item = cJSON_GetObjectItem(obj, "path");
         char *path = cJSON_GetStringValue(item);
         item = cJSON_GetObjectItem(obj, "key");

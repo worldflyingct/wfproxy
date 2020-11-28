@@ -19,7 +19,7 @@ const defconf = "{\n" +
                 "  \"crtpath\": \"server.crt\",\n" +
                 "  \"keypath\": \"server.key\",\n" +
                 "  \"bindport\": 1080,\n" +
-                "  \"httphead\": false,\n" +
+                "  \"needauth\": false,\n" +
                 "  \"keys\": [{\n" +
                 "    \"name\": \"testkey\",\n" +
                 "    \"value\": \"D5lfC6LQ1W0BwzP9x3TsxvvdYBCFznqk\"\n" +
@@ -34,7 +34,7 @@ type Config struct {
     CrtPath string
     KeyPath string
     BindPort int
-    HttpHead bool
+    NeedAuth bool
     Keys []Key
 }
 var c Config
@@ -96,7 +96,7 @@ func ProxyRequest (client net.Conn) {
     b := make([]byte, 32*1024)
     var n int
     var err error
-    if c.HttpHead {
+    if c.NeedAuth {
         n, err = client.Read(b)
         if err != nil {
             log.Println(err)

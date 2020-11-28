@@ -16,7 +16,7 @@ const defconf = "{\n" +
                 "  \"ssl\": false,\n" +
                 "  \"bindport\": 1080,\n" +
                 "  \"serveraddr\": \"proxyserver:443\",\n" +
-                "  \"httphead\": false,\n" +
+                "  \"needauth\": false,\n" +
                 "  \"path\": \"/\",\n" +
                 "  \"key\": \"D5lfC6LQ1W0BwzP9x3TsxvvdYBCFznqk\",\n" +
                 "  \"connectmode\": false,\n" +
@@ -26,7 +26,7 @@ type Config struct {
     Ssl bool
     BindPort int
     ServerAddr string
-    HttpHead bool
+    NeedAuth bool
     ConnectMode bool
 }
 var c Config
@@ -54,12 +54,12 @@ func initconfigdata () int {
     c.Ssl = obj["ssl"].(bool)
     c.BindPort = int(obj["bindport"].(float64))
     c.ServerAddr = obj["serveraddr"].(string)
-    c.HttpHead = obj["httphead"].(bool)
+    c.NeedAuth = obj["needauth"].(bool)
     c.ConnectMode = obj["connectmode"].(bool)
     path := obj["path"].(string)
     key := obj["key"].(string)
     targetaddr := obj["targetaddr"].(string)
-    if c.HttpHead {
+    if c.NeedAuth {
         var serveraddr string
         colon := strings.Index(c.ServerAddr, ":")
         if colon == -1 {
@@ -120,7 +120,7 @@ func ProxyRequest (client net.Conn) {
             return
         }
 
-        if c.HttpHead {
+        if c.NeedAuth {
             _, err = server.Write(auth)
             if err != nil {
                 log.Println(err)
@@ -180,7 +180,7 @@ func ProxyRequest (client net.Conn) {
             return
         }
 
-        if c.HttpHead {
+        if c.NeedAuth {
             _, err = server.Write(auth)
             if err != nil {
                 log.Println(err)
