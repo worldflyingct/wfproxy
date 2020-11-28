@@ -2,19 +2,20 @@ package main
 
 import (
     "log"
-    "crypto/tls"
     "net"
     "io"
     "runtime"
+    "strconv"
     "strings"
+    "crypto/tls"
     "io/ioutil"
     "encoding/json"
 )
 
 const defconf = "{\n" +
                 "  \"ssl\": false,\n" +
-                "  \"bindaddr\": \":1080\",\n" +
-                "  \"serveraddr\": \"proxyserver\",\n" +
+                "  \"bindport\": 1080,\n" +
+                "  \"serveraddr\": \"proxyserver:443\",\n" +
                 "  \"httphead\": false,\n" +
                 "  \"path\": \"/\",\n" +
                 "  \"key\": \"D5lfC6LQ1W0BwzP9x3TsxvvdYBCFznqk\",\n" +
@@ -23,13 +24,10 @@ const defconf = "{\n" +
                 "}"
 type Config struct {
     Ssl bool
-    BindAddr string
+    BindPort int
     ServerAddr string
     HttpHead bool
-    Path string
-    Key string
     ConnectMode bool
-    TargetAddr string
 }
 var c Config
 var auth []byte
@@ -37,32 +35,64 @@ var authlen int
 var connproxy []byte
 var connproxylen int
 
+func initconfigdata () int {
+    f, err := ioutil.ReadFile("config.json")
+    if err != nil {
+        err = ioutil.WriteFile("config.json", []byte(defconf), 0777)
+        if err != nil {
+            log.Println(err)
+            return -1
+        }
+        f = []byte(defconf)
+    }
+    var obj map[string]interface{}
+    err = json.Unmarshal(f, &obj)
+    if err != nil {
+        log.Println(err)
+        return -2
+    }
+    c.Ssl = obj["ssl"].(bool)
+    c.BindPort = obj["bindport"].(int)
+    c.ServerAddr = obj["serveraddr"].(string)
+    c.HttpHead = obj["httphead"].(bool)
+    c.ConnectMode = obj["connectmode"].(bool)
+    path := obj["path"].(string)
+    key := obj["connectmode"].(string)
+    targetaddr := obj["targetaddr"].(string)
+    if c.HttpHead {
+        var serveraddr string
+        colon := strings.Index(c.ServerAddr, ":")
+        if colon == -1 {
+            serveraddr = c.ServerAddr
+            if c.Ssl {
+                c.ServerAddr += ":443"
+            } else {
+                c.ServerAddr += ":80"
+            }
+        } else {
+            serveraddr = c.ServerAddr[:strings.Index(c.ServerAddr, ":")]
+        }
+        auth = []byte("GET " + path + " HTTP/1.1\r\nHost: " + serveraddr + "\r\nConnection: Upgrade\r\nPragma: no-cache\r\nCache-Control: no-cache\r\nUpgrade: websocket\r\nAuthorization: " + key + "\r\n\r\n")
+        authlen = len(auth)
+    }
+    if c.ConnectMode {
+        connproxy = []byte("CONNECT " + targetaddr + " HTTP/1.1\r\nHost: " + targetaddr + "\r\nProxy-Connection: keep-alive\r\n\r\n")
+        connproxylen = len(connproxy)
+    }
+    return 0
+}
+
 func main () {
     runtime.GOMAXPROCS(1)
 
     log.SetFlags(log.LstdFlags | log.Lshortfile)
     log.Println("version: " + runtime.Version())
 
-    f, err := ioutil.ReadFile("config.json")
-    if err != nil {
-        ioutil.WriteFile("config.json", []byte(defconf), 0777)
-        f = []byte(defconf)
-    }
-    err = json.Unmarshal(f, &c)
-    if err != nil {
-        log.Println("config file read error!!!")
+    if initconfigdata() != 0 {
         return
     }
-    if c.HttpHead {
-        auth = []byte("GET " + c.Path + " HTTP/1.1\r\nHost: " + c.ServerAddr + "\r\nConnection: Upgrade\r\nPragma: no-cache\r\nCache-Control: no-cache\r\nUpgrade: websocket\r\nAuthorization: " + c.Key + "\r\n\r\n")
-        authlen = len(auth)
-    }
-    if c.ConnectMode {
-        connproxy = []byte("CONNECT " + c.TargetAddr + " HTTP/1.1\r\nHost: " + c.TargetAddr + "\r\nProxy-Connection: keep-alive\r\n\r\n")
-        connproxylen = len(connproxy)
-    }
 
-    ln, err := net.Listen("tcp", c.BindAddr)
+    ln, err := net.Listen("tcp", ":" + strconv.Itoa(c.BindPort))
     if err != nil {
         log.Println(err)
         return
@@ -82,9 +112,6 @@ func ProxyRequest (client net.Conn) {
     if c.Ssl {
         config := &tls.Config{
             InsecureSkipVerify: true,
-        }
-        if strings.Index(c.ServerAddr, ":") == -1 {
-            c.ServerAddr += ":443"
         }
         server, err := tls.Dial("tcp", c.ServerAddr, config)
         if err != nil {

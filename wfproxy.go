@@ -18,7 +18,7 @@ const defconf = "{\n" +
                 "  \"ssl\": false,\n" +
                 "  \"crtpath\": \"server.crt\",\n" +
                 "  \"keypath\": \"server.key\",\n" +
-                "  \"bindaddr\": \":1080\",\n" +
+                "  \"bindport\": 1080,\n" +
                 "  \"httphead\": false,\n" +
                 "  \"keys\": []\n" +
                 "}"
@@ -26,7 +26,7 @@ type Config struct {
     Ssl bool
     CrtPath string
     KeyPath string
-    BindAddr string
+    BindPort int
     HttpHead bool
     Keys []string
 }
@@ -40,12 +40,16 @@ func main() {
 
     f, err := ioutil.ReadFile("config.json")
     if err != nil {
-        ioutil.WriteFile("config.json", []byte(defconf), 0777)
+        err = ioutil.WriteFile("config.json", []byte(defconf), 0777)
+        if err != nil {
+            log.Println(err)
+            return
+        }
         f = []byte(defconf)
     }
     err = json.Unmarshal(f, &c)
     if err != nil {
-        log.Println("配置文件读取失败")
+        log.Println(err)
         return
     }
     var ln net.Listener
@@ -57,14 +61,14 @@ func main() {
         }
 
         config := &tls.Config{Certificates: []tls.Certificate{cert}}
-        ln, err = tls.Listen("tcp", c.BindAddr, config)
+        ln, err = tls.Listen("tcp", ":" + strconv.Itoa(c.BindPort), config)
         if err != nil {
             log.Println(err)
             return
         }
     } else {
         var err error
-        ln, err = net.Listen("tcp", c.BindAddr)
+        ln, err = net.Listen("tcp", ":" + strconv.Itoa(c.BindPort))
         if err != nil {
             log.Println(err)
             return
