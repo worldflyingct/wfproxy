@@ -21,7 +21,7 @@ const defconf = "{\n" +
                 "  \"bindport\": 1080,\n" +
                 "  \"httphead\": false,\n" +
                 "  \"keys\": [{\n" +
-                "    \"name\": \"testkey\"\n" +
+                "    \"name\": \"testkey\"\n," +
                 "    \"value\": \"D5lfC6LQ1W0BwzP9x3TsxvvdYBCFznqk\"\n" +
                 "  }]\n" +
                 "}"
