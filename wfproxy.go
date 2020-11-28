@@ -20,15 +20,22 @@ const defconf = "{\n" +
                 "  \"keypath\": \"server.key\",\n" +
                 "  \"bindport\": 1080,\n" +
                 "  \"httphead\": false,\n" +
-                "  \"keys\": []\n" +
+                "  \"keys\": [{\n" +
+                "    \"name\": \"testkey\"\n" +
+                "    \"value\": \"D5lfC6LQ1W0BwzP9x3TsxvvdYBCFznqk\"\n" +
+                "  }]\n" +
                 "}"
+type Key struct {
+    Name string
+    Value string
+}
 type Config struct {
     Ssl bool
     CrtPath string
     KeyPath string
     BindPort int
     HttpHead bool
-    Keys []string
+    Keys []Key
 }
 var c Config
 
@@ -111,7 +118,7 @@ func ProxyRequest (client net.Conn) {
         key := string(b[keystart:keystart + 32])
         check := false
         for _, v := range c.Keys {
-            if key == v {
+            if key == v.Value {
                 check = true
                 break
             }
