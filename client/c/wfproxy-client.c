@@ -91,6 +91,8 @@ int main (int argc, char* argv[]) {
             printf("create SSL CTX fail, in %s, at %d\n",  __FILE__, __LINE__);
             return -2;
         }
+    } else {
+        ctx = NULL;
     }
     if ((epollfd = epoll_create(MAX_EVENT)) < 0) {
         printf("create epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
@@ -136,7 +138,7 @@ int main (int argc, char* argv[]) {
                     }
                 } else if (events & EPOLLOUT) {
                     if (fdclient->status == TCPNOREADY) {
-                        if (c.ssl) {
+                        if (ctx) {
                             int r_code = SSL_connect(fdclient->tls);
                             int errcode = SSL_get_error(fdclient->tls, r_code);
                             if (r_code < 0) {
@@ -156,7 +158,6 @@ int main (int argc, char* argv[]) {
                                     printf("create epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
                                     removeclient(fdclient);
                                 }
-
                             }
                         } else {
                             clientstatuschange(fdclient);
@@ -174,7 +175,7 @@ int main (int argc, char* argv[]) {
             }
         }
     }
-    if (c.ssl) {
+    if (ctx != NULL) {
         SSL_CTX_free(ctx);
     }
     return 0;
@@ -323,7 +324,12 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
 
 int readdata (struct FDCLIENT* fdclient) {
     static unsigned char readbuf[32*1024];
-    ssize_t len = read(fdclient->fd, readbuf, sizeof(readbuf));
+    ssize_t len;
+    if (fdclient->tls) {
+        len = SSL_read (fdclient->tls, readbuf, sizeof(readbuf));
+    } else {
+        len = read(fdclient->fd, readbuf, sizeof(readbuf));
+    }
     if (len < 0) {
         if (errno != EAGAIN) {
             perror("write error");
@@ -337,6 +343,7 @@ int readdata (struct FDCLIENT* fdclient) {
         if (memcmp(readbuf, "HTTP/1.1 101 Switching Protocols\r\n", 34)) {
             printf("fd:%d, in %s, at %d\n", fdclient->fd,  __FILE__, __LINE__);
             readbuf[len-1] = '\0';
+            printf("len:%d\n", len);
             printf("%s\n", readbuf);
             removeclient(fdclient);
             return -2;
@@ -346,6 +353,7 @@ int readdata (struct FDCLIENT* fdclient) {
         if (memcmp(readbuf, "HTTP/1.1 200 Connection established\r\n", 37)) {
             printf("fd:%d, in %s, at %d\n", fdclient->fd,  __FILE__, __LINE__);
             readbuf[len-1] = '\0';
+            printf("len:%d\n", len);
             printf("%s\n", readbuf);
             removeclient(fdclient);
             return -3;
@@ -555,7 +563,7 @@ int addclient (int acceptfd) {
             return -7;
         }
     }
-    if (c.ssl) {
+    if (ctx) {
         SSL *tls = SSL_new(ctx);
         SSL_set_fd(tls, outfd);
         fdserver->tls = tls;
