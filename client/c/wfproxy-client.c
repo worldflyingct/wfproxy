@@ -45,7 +45,7 @@ struct FDCLIENT {
                 "  \"serveraddr\": \"proxyserver:443\",\n" \
                 "  \"needauth\": false,\n" \
                 "  \"path\": \"/\",\n" \
-                "  \"key\": \"D5lfC6LQ1W0BwzP9x3TsxvvdYBCFznqk\",\n" \
+                "  \"key\": \"65f5bb36-8a0a-4be4-b0d0-18dee527b2d8\",\n" \
                 "  \"connectmode\": false,\n" \
                 "  \"targetaddr\": \"targetserver:443\"\n" \
                 "}"

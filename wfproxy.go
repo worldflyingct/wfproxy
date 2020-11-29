@@ -22,7 +22,7 @@ const defconf = "{\n" +
                 "  \"needauth\": false,\n" +
                 "  \"keys\": [{\n" +
                 "    \"name\": \"testkey\",\n" +
-                "    \"value\": \"D5lfC6LQ1W0BwzP9x3TsxvvdYBCFznqk\"\n" +
+                "    \"value\": \"65f5bb36-8a0a-4be4-b0d0-18dee527b2d8\"\n" +
                 "  }]\n" +
                 "}"
 type Key struct {
@@ -115,7 +115,7 @@ func ProxyRequest (client net.Conn) {
             client.Close()
             return
         }
-        key := string(b[keystart:keystart + 32])
+        key := string(b[keystart:keystart + 36])
         check := false
         for _, v := range c.Keys {
             if key == v.Value {
