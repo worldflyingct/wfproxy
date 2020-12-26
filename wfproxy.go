@@ -1,6 +1,9 @@
 package main
 
 import (
+    "fmt"
+    "time"
+    "net/http"
     "log"
     "net"
     "io"
@@ -25,6 +28,10 @@ const defconf = "{\n" +
                 "    \"value\": \"65f5bb36-8a0a-4be4-b0d0-18dee527b2d8\"\n" +
                 "  }]\n" +
                 "}"
+const page404 = "HTTP/1.1 404 Not Found\r\nServer: nginx/1.14.2\r\nDate: %s\r\n" +
+                "Content-Type: text/html\r\nContent-Length: 169\r\nConnection: keep-alive\r\n\r\n" +
+                "<html>\r\n<head><title>404 Not Found</title></head>\r\n<body bgcolor=\"white\">\r\n<center><h1>404 Not Found</h1></center>\r\n" +
+                "<hr><center>nginx/1.14.2</center>\r\n</body>\r\n</html>\r\n"
 type Key struct {
     Name string
     Value string
@@ -112,6 +119,8 @@ func ProxyRequest (client net.Conn) {
         keystart := bytes.Index(b[:headlen], []byte("Authorization: ")) + 15
         if keystart < 15 {
             log.Println("no find auth key.")
+            body := fmt.Sprintf(page404, time.Now().UTC().Format(http.TimeFormat))
+            client.Write([]byte(body))
             client.Close()
             return
         }
@@ -125,6 +134,8 @@ func ProxyRequest (client net.Conn) {
         }
         if check == false {
             log.Println("key check fail!!!")
+            body := fmt.Sprintf(page404, time.Now().UTC().Format(http.TimeFormat))
+            client.Write([]byte(body))
             client.Close()
             return
         }
