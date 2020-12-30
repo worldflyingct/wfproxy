@@ -113,6 +113,8 @@ func ProxyRequest (client net.Conn) {
         headlen := bytes.Index(b[:n], []byte("\r\n\r\n")) + 4
         if headlen < 4 {
             log.Println("no find end flag.")
+            body := fmt.Sprintf(page404, time.Now().UTC().Format(http.TimeFormat))
+            client.Write([]byte(body))
             client.Close()
             return
         }
