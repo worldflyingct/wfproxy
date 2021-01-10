@@ -25,7 +25,8 @@ const defconf = "{\n" +
                 "  \"needauth\": false,\n" +
                 "  \"keys\": [{\n" +
                 "    \"name\": \"testkey\",\n" +
-                "    \"value\": \"65f5bb36-8a0a-4be4-b0d0-18dee527b2d8\"\n" +
+                "    \"value\": \"65f5bb36-8a0a-4be4-b0d0-18dee527b2d8\",\n" +
+                "    \"enable\": true\n" +
                 "  }]\n" +
                 "}"
 const page404 = "HTTP/1.1 404 Not Found\r\nServer: nginx/1.14.2\r\nDate: %s\r\n" +
