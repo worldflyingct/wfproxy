@@ -103,6 +103,7 @@ func ProxyRequest (client net.Conn) {
     b := make([]byte, 32*1024)
     var n int
     var err error
+    var userName string
     if c.NeedAuth {
         n, err = client.Read(b)
         if err != nil {
@@ -131,6 +132,7 @@ func ProxyRequest (client net.Conn) {
         for _, v := range c.Keys {
             if key == v.Value {
                 check = true
+                userName = v.Name
                 break
             }
         }
@@ -147,6 +149,8 @@ func ProxyRequest (client net.Conn) {
             client.Close()
             return
         }
+    } else {
+        userName = "anonymous"
     }
     n, err = client.Read(b)
     if err != nil {
@@ -193,7 +197,7 @@ func ProxyRequest (client net.Conn) {
                 return
         }
         address := net.JoinHostPort(host, strconv.Itoa(int(b[n-2])<<8 | int(b[n-1])))
-        log.Println(address);
+        log.Println(address, userName);
         server, err := net.Dial("tcp", address)
         if err != nil {
             log.Println(err)
@@ -212,10 +216,10 @@ func ProxyRequest (client net.Conn) {
     } else { // http代理
         maddr := bytes.IndexByte(b[:n], ' ')
         method := string(b[:maddr])
-        host := string(b[maddr+1:maddr+1+bytes.IndexByte(b[maddr+1:n], ' ')])
+        address := string(b[maddr+1:maddr+1+bytes.IndexByte(b[maddr+1:n], ' ')])
         if method == "CONNECT" {
-            log.Println(host)
-            server, err := net.Dial("tcp", host)
+            log.Println(address, userName)
+            server, err := net.Dial("tcp", address)
             if err != nil {
                 log.Println(err)
                 client.Close()
@@ -231,18 +235,18 @@ func ProxyRequest (client net.Conn) {
             go IoCopy(client, server)
             go IoCopy(server, client)
         } else {
-            hostPortURL, err := url.Parse(host)
+            hostPortURL, err := url.Parse(address)
             if err != nil {
                 log.Println(err)
                 client.Close()
                 return
             }
-            host := hostPortURL.Host
-            if strings.Index(host, ":") == -1 {
-                host += ":80"
+            address := hostPortURL.Host
+            if strings.Index(address, ":") == -1 {
+                address += ":80"
             }
-            log.Println(host)
-            server, err := net.Dial("tcp", host)
+            log.Println(address, userName)
+            server, err := net.Dial("tcp", address)
             if err != nil {
                 log.Println(err)
                 client.Close()
