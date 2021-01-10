@@ -35,6 +35,7 @@ const page404 = "HTTP/1.1 404 Not Found\r\nServer: nginx/1.14.2\r\nDate: %s\r\n"
 type Key struct {
     Name string
     Value string
+    Enable bool
 }
 type Config struct {
     Ssl bool
@@ -47,8 +48,6 @@ type Config struct {
 var c Config
 
 func main() {
-    runtime.GOMAXPROCS(1)
-
     log.SetFlags(log.LstdFlags | log.Lshortfile)
     log.Println("version: " + runtime.Version())
 
@@ -130,7 +129,7 @@ func ProxyRequest (client net.Conn) {
         key := string(b[keystart:keystart + 36])
         check := false
         for _, v := range c.Keys {
-            if key == v.Value {
+            if key == v.Value && v.Enable {
                 check = true
                 userName = v.Name
                 break
