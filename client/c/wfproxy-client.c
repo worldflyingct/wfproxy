@@ -234,16 +234,15 @@ int writedata (struct FDCLIENT* fdclient) {
     } else {
         len = write(fdclient->fd, fdclient->data, fdclient->datasize);
     }
-    if (len < fdclient->datasize) {
-        if (len < 0) {
-            if (errno != EAGAIN) {
-                perror("write error");
-                printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
-                removeclient(fdclient);
-                return -1;
-            }
-            return 0;
+    if (len < 0) {
+        if (errno != EAGAIN) {
+            perror("write error");
+            printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
+            removeclient(fdclient);
+            return -1;
         }
+        return 0;
+    } else if (len < fdclient->datasize) {
         unsigned int datasize = fdclient->datasize - len;
         memcpy(fdclient->data, fdclient->data + len, datasize);
         fdclient->datasize = datasize;
@@ -267,16 +266,30 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
         } else {
             len = write(fdclient->fd, data, size);
         }
-        if (len < fdclient->datasize) {
-            if (len < 0) {
-                if (errno != EAGAIN) {
-                    perror("write error");
-                    printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
-                    removeclient(fdclient);
-                    return -1;
-                }
-                len = 0;
+        if (len < 0) {
+            if (errno != EAGAIN) {
+                perror("write error");
+                printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
+                removeclient(fdclient);
+                return -1;
             }
+            fdclient->data = (char*)malloc(size);
+            if (fdclient->data == NULL) {
+                perror("malloc fail");
+                printf("size: %d, errno:%d, in %s, at %d\n", size, errno,  __FILE__, __LINE__);
+                removeclient(fdclient);
+                return -2;
+            }
+            memcpy(fdclient->data, data, size);
+            fdclient->datasize = size;
+            if (modepoll(fdclient, EPOLLIN | EPOLLOUT)) {
+                perror("modify epoll error");
+                printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
+                removeclient(fdclient);
+                return -3;
+            }
+            fdclient->canwrite = 0;
+        } else if (len < fdclient->datasize) {
             unsigned int datasize = size - len;
             if (datasize > fdclient->fullsize) {
                 if (fdclient->fullsize > 0) {
@@ -287,7 +300,7 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
                     perror("malloc fail");
                     printf("size: %d, errno:%d, in %s, at %d\n", datasize, errno,  __FILE__, __LINE__);
                     removeclient(fdclient);
-                    return -2;
+                    return -4;
                 }
                 fdclient->fullsize = datasize;
             }
@@ -297,7 +310,7 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
                 perror("modify epoll error");
                 printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
                 removeclient(fdclient);
-                return -3;
+                return -5;
             }
             fdclient->canwrite = 0;
         }
@@ -312,7 +325,7 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
                 perror("malloc fail");
                 printf("size: %d, errno:%d, in %s, at %d\n", datasize, errno,  __FILE__, __LINE__);
                 removeclient(fdclient);
-                return -4;
+                return -6;
             }
             fdclient->fullsize = datasize;
         }
@@ -576,7 +589,7 @@ int addclient (int acceptfd) {
     fdserver->status = TCPNOREADY;
 }
 
-int create_socketfd () {
+int Init_Rroxy () {
     struct sockaddr_in sin;
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
