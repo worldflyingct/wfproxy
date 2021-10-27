@@ -589,7 +589,7 @@ int addclient (int acceptfd) {
     fdserver->status = TCPNOREADY;
 }
 
-int Init_Rroxy () {
+int create_socketfd () {
     struct sockaddr_in sin;
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
