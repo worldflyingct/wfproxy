@@ -242,7 +242,7 @@ int writedata (struct FDCLIENT* fdclient) {
             return -1;
         }
         return 0;
-    } else if (len < fdclient->datasize) {
+    } else if (0 < len && len < fdclient->datasize) {
         unsigned int datasize = fdclient->datasize - len;
         memcpy(fdclient->data, fdclient->data + len, datasize);
         fdclient->datasize = datasize;
@@ -355,7 +355,7 @@ int readdata (struct FDCLIENT* fdclient) {
     if (fdclient->status == WAITAUTH) {
         if (memcmp(readbuf, "HTTP/1.1 101 Switching Protocols\r\n", 34)) {
             printf("fd:%d, in %s, at %d\n", fdclient->fd,  __FILE__, __LINE__);
-            readbuf[len-1] = '\0';
+            readbuf[len] = '\0';
             printf("len:%d\n", len);
             printf("%s\n", readbuf);
             removeclient(fdclient);
@@ -365,7 +365,7 @@ int readdata (struct FDCLIENT* fdclient) {
     } else if (fdclient->status == WAITCONNECT) {
         if (memcmp(readbuf, "HTTP/1.1 200 Connection established\r\n", 37)) {
             printf("fd:%d, in %s, at %d\n", fdclient->fd,  __FILE__, __LINE__);
-            readbuf[len-1] = '\0';
+            readbuf[len] = '\0';
             printf("len:%d\n", len);
             printf("%s\n", readbuf);
             removeclient(fdclient);
