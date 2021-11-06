@@ -369,9 +369,9 @@ int readdata (struct FDCLIENT* fdclient) {
             int errcode = SSL_get_error(fdclient->tls, len);
             if (errcode == SSL_ERROR_WANT_WRITE) {
                 fdclient->status = TLSNOREADY;
-                if (modepoll(fdserver, EPOLLOUT)) {
-                    printf("create epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
-                    removeclient(fdserver);
+                if (modepoll(fdclient, EPOLLOUT)) {
+                    printf("modify epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
+                    removeclient(fdclient);
                     return -1;
                 }
                 return 0;
