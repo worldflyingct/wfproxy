@@ -26,6 +26,7 @@ typedef enum {
     WAITAUTH, // 等待auth认证返回
     WAITCONNECT, // 等待connect代理返回
     REGISTER, // 注册完毕，开始双向对传
+    TLSNOREADY, // tls认证失败，需要重新认证
 } STATUS;
 
 struct FDCLIENT {
@@ -116,19 +117,33 @@ int main (int argc, char* argv[]) {
                 } else if (events & EPOLLIN) {
                     if (fdclient->fd == fd) {
                         addclient(fd);
-                    } else if (fdclient->status == TCPNOREADY) {
-                        int r_code = SSL_connect(fdclient->tls);
-                        int errcode = SSL_get_error(fdclient->tls, r_code);
-                        if (r_code < 0) {
-                            if (errcode == SSL_ERROR_WANT_WRITE) { // 资源暂时不可用，write没有ready.
-                                if (modepoll(fdclient, EPOLLOUT)) {
-                                    printf("create epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
+                    } else if (fdclient->status == TCPNOREADY || fdclient->status == TLSNOREADY) {
+                        if (ctx) {
+                            int r_code = SSL_connect(fdclient->tls);
+                            int errcode = SSL_get_error(fdclient->tls, r_code);
+                            if (r_code < 0) {
+                                if (errcode == SSL_ERROR_WANT_WRITE) { // 资源暂时不可用，write没有ready.
+                                    if (modepoll(fdclient, EPOLLOUT)) {
+                                        printf("modify epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
+                                        removeclient(fdclient);
+                                    }
+                                } else if (errcode != SSL_ERROR_WANT_READ) {
+                                    perror("tls connect error");
+                                    printf("errno:%d, errcode:%d, in %s, at %d\n", errno, errcode, __FILE__, __LINE__);
                                     removeclient(fdclient);
                                 }
-                            } else if (errcode != SSL_ERROR_WANT_READ) {
-                                perror("tls connect error");
-                                printf("errno:%d, errcode:%d, in %s, at %d\n", errno, errcode, __FILE__, __LINE__);
-                                removeclient(fdclient);
+                            } else {
+                                if (fdclient->status == TCPNOREADY) {
+                                    clientstatuschange(fdclient);
+                                } else {
+                                    fdclient->status = REGISTER;
+                                }
+                                if (fdclient->datasize > 0) {
+                                    if (modepoll(fdclient, EPOLLIN | EPOLLOUT)) {
+                                        printf("modify epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
+                                        removeclient(fdclient);
+                                    }
+                                }
                             }
                         } else {
                             clientstatuschange(fdclient);
@@ -137,14 +152,14 @@ int main (int argc, char* argv[]) {
                         readdata(fdclient);
                     }
                 } else if (events & EPOLLOUT) {
-                    if (fdclient->status == TCPNOREADY) {
+                    if (fdclient->status == TCPNOREADY || fdclient->status == TLSNOREADY) {
                         if (ctx) {
                             int r_code = SSL_connect(fdclient->tls);
                             int errcode = SSL_get_error(fdclient->tls, r_code);
                             if (r_code < 0) {
                                 if (errcode == SSL_ERROR_WANT_READ) { // 资源暂时不可用，read没有ready.
                                     if (modepoll(fdclient, EPOLLIN)) {
-                                        printf("create epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
+                                        printf("modify epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
                                         removeclient(fdclient);
                                     }
                                 } else if (errcode != SSL_ERROR_WANT_WRITE) {
@@ -153,18 +168,19 @@ int main (int argc, char* argv[]) {
                                     removeclient(fdclient);
                                 }
                             } else {
-                                clientstatuschange(fdclient);
-                                if (modepoll(fdclient, EPOLLIN)) {
-                                    printf("create epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
+                                if (fdclient->status == TCPNOREADY) {
+                                    clientstatuschange(fdclient);
+                                } else {
+                                    fdclient->status = REGISTER;
+                                }
+                                uint32_t flags = fdclient->datasize > 0 ? (EPOLLIN | EPOLLOUT) : EPOLLIN;
+                                if (modepoll(fdclient, flags)) {
+                                    printf("modify epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
                                     removeclient(fdclient);
                                 }
                             }
                         } else {
                             clientstatuschange(fdclient);
-                            if (modepoll(fdclient, EPOLLIN)) {
-                                printf("create epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
-                                removeclient(fdclient);
-                            }
                         }
                     } else {
                         writedata(fdclient);
@@ -231,6 +247,19 @@ int writedata (struct FDCLIENT* fdclient) {
     ssize_t len;
     if (fdclient->tls) {
         len = SSL_write(fdclient->tls, fdclient->data, fdclient->datasize);
+        if (len < 0) {
+            int errcode = SSL_get_error(fdclient->tls, len);
+            if (errcode == SSL_ERROR_WANT_READ) {
+                fdclient->status = TLSNOREADY;
+                if (modepoll(fdclient, EPOLLIN)) {
+                    perror("modify epoll error");
+                    printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
+                    removeclient(fdclient);
+                    return -1;
+                }
+                return 0;
+            }
+        }
     } else {
         len = write(fdclient->fd, fdclient->data, fdclient->datasize);
     }
@@ -239,10 +268,11 @@ int writedata (struct FDCLIENT* fdclient) {
             perror("write error");
             printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
             removeclient(fdclient);
-            return -1;
+            return -2;
         }
         return 0;
-    } else if (0 < len && len < fdclient->datasize) {
+    }
+    if (len < fdclient->datasize) {
         unsigned int datasize = fdclient->datasize - len;
         memcpy(fdclient->data, fdclient->data + len, datasize);
         fdclient->datasize = datasize;
@@ -251,8 +281,9 @@ int writedata (struct FDCLIENT* fdclient) {
             perror("modify epoll error");
             printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
             removeclient(fdclient);
-            return -2;
+            return -3;
         }
+        fdclient->datasize = 0;
         fdclient->canwrite = 1;
     }
     return 0;
@@ -263,6 +294,12 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
         ssize_t len;
         if (fdclient->tls) {
             len = SSL_write(fdclient->tls, data, size);
+            if (len < 0) {
+                int errcode = SSL_get_error(fdclient->tls, len);
+                if (errcode == SSL_ERROR_WANT_READ) {
+                    fdclient->status = TLSNOREADY;
+                }
+            }
         } else {
             len = write(fdclient->fd, data, size);
         }
@@ -271,25 +308,11 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
                 perror("write error");
                 printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
                 removeclient(fdclient);
-                return -1;
-            }
-            fdclient->data = (char*)malloc(size);
-            if (fdclient->data == NULL) {
-                perror("malloc fail");
-                printf("size: %d, errno:%d, in %s, at %d\n", size, errno,  __FILE__, __LINE__);
-                removeclient(fdclient);
                 return -2;
             }
-            memcpy(fdclient->data, data, size);
-            fdclient->datasize = size;
-            if (modepoll(fdclient, EPOLLIN | EPOLLOUT)) {
-                perror("modify epoll error");
-                printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
-                removeclient(fdclient);
-                return -3;
-            }
-            fdclient->canwrite = 0;
-        } else if (len < fdclient->datasize) {
+            len = 0;
+        }
+        if (len < size) {
             unsigned int datasize = size - len;
             if (datasize > fdclient->fullsize) {
                 if (fdclient->fullsize > 0) {
@@ -300,17 +323,19 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
                     perror("malloc fail");
                     printf("size: %d, errno:%d, in %s, at %d\n", datasize, errno,  __FILE__, __LINE__);
                     removeclient(fdclient);
-                    return -4;
+                    return -3;
                 }
                 fdclient->fullsize = datasize;
             }
             memcpy(fdclient->data, data + len, datasize);
             fdclient->datasize = datasize;
-            if (modepoll(fdclient, EPOLLIN | EPOLLOUT)) {
-                perror("modify epoll error");
-                printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
-                removeclient(fdclient);
-                return -5;
+            if (fdclient->status != TLSNOREADY) {
+                if (modepoll(fdclient, EPOLLIN | EPOLLOUT)) {
+                    perror("modify epoll error");
+                    printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
+                    removeclient(fdclient);
+                    return -4;
+                }
             }
             fdclient->canwrite = 0;
         }
@@ -325,7 +350,7 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
                 perror("malloc fail");
                 printf("size: %d, errno:%d, in %s, at %d\n", datasize, errno,  __FILE__, __LINE__);
                 removeclient(fdclient);
-                return -6;
+                return -5;
             }
             fdclient->fullsize = datasize;
         }
@@ -339,16 +364,28 @@ int readdata (struct FDCLIENT* fdclient) {
     static unsigned char readbuf[32*1024];
     ssize_t len;
     if (fdclient->tls) {
-        len = SSL_read (fdclient->tls, readbuf, sizeof(readbuf));
+        len = SSL_read(fdclient->tls, readbuf, sizeof(readbuf)-1);
+        if (len < 0) {
+            int errcode = SSL_get_error(fdclient->tls, len);
+            if (errcode == SSL_ERROR_WANT_WRITE) {
+                fdclient->status = TLSNOREADY;
+                if (modepoll(fdserver, EPOLLOUT)) {
+                    printf("create epoll fd fail, in %s, at %d\n",  __FILE__, __LINE__);
+                    removeclient(fdserver);
+                    return -1;
+                }
+                return 0;
+            }
+        }
     } else {
-        len = read(fdclient->fd, readbuf, sizeof(readbuf));
+        len = read(fdclient->fd, readbuf, sizeof(readbuf)-1);
     }
     if (len < 0) {
         if (errno != EAGAIN) {
             perror("write error");
             printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
             removeclient(fdclient);
-            return -1;
+            return -2;
         }
         return 0;
     }
@@ -359,7 +396,7 @@ int readdata (struct FDCLIENT* fdclient) {
             printf("len:%d\n", len);
             printf("%s\n", readbuf);
             removeclient(fdclient);
-            return -2;
+            return -3;
         }
         clientstatuschange(fdclient);
     } else if (fdclient->status == WAITCONNECT) {
@@ -369,7 +406,7 @@ int readdata (struct FDCLIENT* fdclient) {
             printf("len:%d\n", len);
             printf("%s\n", readbuf);
             removeclient(fdclient);
-            return -3;
+            return -4;
         }
         clientstatuschange(fdclient);
     } else if (fdclient->status == REGISTER) {
