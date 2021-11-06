@@ -633,6 +633,8 @@ int create_socketfd () {
         printf("run socket function is fail, fd:%d, in %s, at %d\n", fd, __FILE__, __LINE__);
         return -1;
     }
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
     memset(&sin, 0, sizeof(struct sockaddr_in));
     sin.sin_family = AF_INET; // ipv4
     sin.sin_addr.s_addr = INADDR_ANY; // 本机任意ip
