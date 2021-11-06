@@ -308,7 +308,7 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
                 perror("write error");
                 printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
                 removeclient(fdclient);
-                return -2;
+                return -1;
             }
             len = 0;
         }
@@ -323,7 +323,7 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
                     perror("malloc fail");
                     printf("size: %d, errno:%d, in %s, at %d\n", datasize, errno,  __FILE__, __LINE__);
                     removeclient(fdclient);
-                    return -3;
+                    return -2;
                 }
                 fdclient->fullsize = datasize;
             }
@@ -334,7 +334,7 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
                     perror("modify epoll error");
                     printf("fd:%d, errno:%d, in %s, at %d\n", fdclient->fd, errno,  __FILE__, __LINE__);
                     removeclient(fdclient);
-                    return -4;
+                    return -3;
                 }
             }
             fdclient->canwrite = 0;
@@ -350,7 +350,7 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
                 perror("malloc fail");
                 printf("size: %d, errno:%d, in %s, at %d\n", datasize, errno,  __FILE__, __LINE__);
                 removeclient(fdclient);
-                return -5;
+                return -4;
             }
             fdclient->fullsize = datasize;
         }
