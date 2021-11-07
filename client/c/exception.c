@@ -82,9 +82,10 @@ void handle_proc_sig(int signo) {
         printf(" Continue (POSIX). \r\n");
     else if( signo == MANPROCSIG_STOP )
         printf(" Stop, unblockable (POSIX). \r\n");
-    else if( signo == MANPROCSIG_TSTP )
+    else if( signo == MANPROCSIG_TSTP ) {
         printf(" Keyboard stop (POSIX). \r\n");
-    else if( signo == MANPROCSIG_TTIN )
+		return;
+	} else if( signo == MANPROCSIG_TTIN )
         printf(" Background read from tty (POSIX). \r\n");
     else if( signo == MANPROCSIG_TTOU )
         printf(" Background write to tty (POSIX). \r\n");
