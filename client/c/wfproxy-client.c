@@ -87,7 +87,7 @@ int main () {
 #ifdef DEBUG
     while (1) {
         int pid = fork();
-        if (pid > 0) { // work thread
+        if (pid == 0) { // work thread
             ListenAllSig();
             return work();
         }
@@ -689,6 +689,8 @@ int create_socketfd () {
     }
     int on = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &on, sizeof(on));
     memset(&sin, 0, sizeof(struct sockaddr_in));
     sin.sin_family = AF_INET; // ipv4
     sin.sin_addr.s_addr = INADDR_ANY; // 本机任意ip
