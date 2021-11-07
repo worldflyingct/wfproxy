@@ -68,6 +68,7 @@ struct FDCLIENT *remainfdclienthead = NULL;
 static SSL_CTX *ctx;
 static int epollfd;
 
+int work ();
 int initconfigdata();
 int create_socketfd();
 int writedata(struct FDCLIENT* fdclient);
@@ -77,7 +78,30 @@ int addclient(int acceptfd);
 int removeclient(struct FDCLIENT* fdclient);
 int modepoll (struct FDCLIENT *fdclient, uint32_t flags);
 
-int main (int argc, char* argv[]) {
+#include "exception.h"
+#ifdef DEBUG
+#include <sys/wait.h>
+#endif
+
+int main () {
+#ifdef DEBUG
+    while (1) {
+        int pid = fork();
+        if (pid > 0) { // work thread
+            ListenAllSig();
+            return work();
+        }
+        wait(NULL);
+    }
+#else
+    return work();
+#endif
+}
+
+int work () {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     printf("build at %s %s, in %s, at %d\n", __DATE__, __TIME__, __FILE__, __LINE__);
     if (initconfigdata()) {
         printf("init config data fail, in %s, at %d\n",  __FILE__, __LINE__);
@@ -198,6 +222,9 @@ int main (int argc, char* argv[]) {
 }
 
 int removeclient (struct FDCLIENT* fdclient) {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     if (fdclient->status == DISCONNECT) {
         return 0;
     }
@@ -230,6 +257,9 @@ int removeclient (struct FDCLIENT* fdclient) {
 }
 
 int addtoepoll (struct FDCLIENT *fdclient, uint32_t flags) {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     struct epoll_event ev;
     ev.data.ptr = fdclient;
     ev.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | flags; // 水平触发，保证所有数据都能读到
@@ -237,6 +267,9 @@ int addtoepoll (struct FDCLIENT *fdclient, uint32_t flags) {
 }
 
 int modepoll (struct FDCLIENT *fdclient, uint32_t flags) {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     struct epoll_event ev;
     ev.data.ptr = fdclient;
     ev.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | flags; // 水平触发，保证所有数据都能读到
@@ -244,6 +277,9 @@ int modepoll (struct FDCLIENT *fdclient, uint32_t flags) {
 }
 
 int writedata (struct FDCLIENT* fdclient) {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     ssize_t len;
     if (fdclient->tls) {
         len = SSL_write(fdclient->tls, fdclient->data, fdclient->datasize);
@@ -290,6 +326,9 @@ int writedata (struct FDCLIENT* fdclient) {
 }
 
 int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     if (fdclient->canwrite) {
         ssize_t len;
         if (fdclient->tls) {
@@ -361,6 +400,9 @@ int writenode (struct FDCLIENT* fdclient, const char* data, unsigned int size) {
 }
 
 int readdata (struct FDCLIENT* fdclient) {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     static unsigned char readbuf[32*1024];
     ssize_t len;
     if (fdclient->tls) {
@@ -416,6 +458,9 @@ int readdata (struct FDCLIENT* fdclient) {
 }
 
 int clientstatuschange (struct FDCLIENT* fdclient) {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     switch (fdclient->status) {
         case TCPNOREADY:
                 if (c.needauth) {
@@ -454,6 +499,9 @@ int clientstatuschange (struct FDCLIENT* fdclient) {
 }
 
 int setsocketoption (int fd) {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) {
         printf("get flags fail, fd:%d, in %s, at %d\n", fd, __FILE__, __LINE__);
@@ -537,6 +585,9 @@ int setsocketoption (int fd) {
 }
 
 int addclient (int acceptfd) {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     struct sockaddr_in sin;
     socklen_t in_addr_len = sizeof(struct sockaddr_in);
     int infd = accept(acceptfd, (struct sockaddr*)&sin, &in_addr_len);
@@ -627,6 +678,9 @@ int addclient (int acceptfd) {
 }
 
 int create_socketfd () {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     struct sockaddr_in sin;
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -684,6 +738,9 @@ int create_socketfd () {
 #define JSONSIZE   1024
 #define HEADSIZE   1024
 int initconfigdata () {
+#ifdef DEBUG
+    addTrace(__func__, sizeof(__func__));
+#endif
     char *json = (char*)malloc(JSONSIZE);
     if (json == NULL) {
         perror("malloc fail");
