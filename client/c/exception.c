@@ -65,9 +65,10 @@ void handle_proc_sig(int signo) {
         printf(" Segmentation violation (ANSI). \r\n");
     else if( signo == MANPROCSIG_USR2 )
         printf(" User-defined signal 2 (POSIX). \r\n");
-    else if( signo == MANPROCSIG_PIPE )
+    else if( signo == MANPROCSIG_PIPE ) {
         printf(" Broken pipe (POSIX). \r\n");
-    else if( signo == MANPROCSIG_ALRM )
+        return;
+    } else if( signo == MANPROCSIG_ALRM )
         printf(" Alarm clock (POSIX). \r\n");
     else if( signo == MANPROCSIG_TERM )
         printf(" Termination (ANSI). \r\n");
