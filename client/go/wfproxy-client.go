@@ -71,7 +71,6 @@ func initconfigdata () int {
         authlen = len(auth)
     }
     if colon == -1 {
-        serveraddr = c.ServerAddr
         if c.Ssl {
             c.ServerAddr += ":443"
         } else {
@@ -112,138 +111,83 @@ func main () {
 }
 
 func ProxyRequest (client net.Conn) {
+    var server net.Conn
     if c.Ssl {
-        config := &tls.Config{
+        conf := &tls.Config{
             InsecureSkipVerify: true,
         }
-        server, err := tls.Dial("tcp", c.ServerAddr, config)
+        d := &tls.Dialer{
+            Config: conf,
+        }
+        s, err := d.Dial("tcp", c.ServerAddr)
         if err != nil {
             log.Println(err)
             client.Close()
             return
         }
-
-        if c.NeedAuth {
-            _, err = server.Write(auth)
-            if err != nil {
-                log.Println(err)
-                client.Close()
-                server.Close()
-                return
-            }
-            b := make([]byte, 32*1024)
-            n, err := server.Read(b)
-            if err != nil {
-                log.Println(err)
-                client.Close()
-                server.Close()
-                return
-            }
-            if string(b[:34]) != "HTTP/1.1 101 Switching Protocols\r\n" {
-                log.Println(string(b[:n]))
-                client.Close()
-                server.Close()
-                return
-            }
-        }
-        if c.ConnectMode {
-            _, err = server.Write(connproxy)
-            if err != nil {
-                log.Println(err)
-                client.Close()
-                server.Close()
-                return
-            }
-            b := make([]byte, 32*1024)
-            n, err := server.Read(b)
-            if err != nil {
-                log.Println(err)
-                client.Close()
-                server.Close()
-                return
-            }
-            if string(b[:37]) != "HTTP/1.1 200 Connection established\r\n" {
-                log.Println(string(b[:n]))
-                client.Close()
-                server.Close()
-                return
-            }
-        }
-
-        go IoCopy1(client, server)
-        go IoCopy2(server, client)
+        server = s
     } else {
-        server, err := net.Dial("tcp", c.ServerAddr)
+        s, err := net.Dial("tcp", c.ServerAddr)
         if err != nil {
             log.Println(err)
             client.Close()
             return
         }
-
-        if c.NeedAuth {
-            _, err = server.Write(auth)
-            if err != nil {
-                log.Println(err)
-                client.Close()
-                server.Close()
-                return
-            }
-            b := make([]byte, 32*1024)
-            n, err := server.Read(b)
-            if err != nil {
-                log.Println(err)
-                client.Close()
-                server.Close()
-                return
-            }
-            if string(b[:34]) != "HTTP/1.1 101 Switching Protocols\r\n" {
-                log.Println(string(b[:n]))
-                client.Close()
-                server.Close()
-                return
-            }
-            log.Println(string(b[:n]))
-        }
-        if c.ConnectMode {
-            _, err = server.Write(connproxy)
-            if err != nil {
-                log.Println(err)
-                client.Close()
-                server.Close()
-                return
-            }
-            b := make([]byte, 32*1024)
-            n, err := server.Read(b)
-            if err != nil {
-                log.Println(err)
-                client.Close()
-                server.Close()
-                return
-            }
-            if string(b[:37]) != "HTTP/1.1 200 Connection established\r\n" {
-                log.Println(string(b[:n]))
-                client.Close()
-                server.Close()
-                return
-            }
-        }
-
-        go IoCopy(client, server)
-        go IoCopy(server, client)
+        server = s
     }
+
+    if c.NeedAuth {
+        _, err := server.Write(auth)
+        if err != nil {
+            log.Println(err)
+            client.Close()
+            server.Close()
+            return
+        }
+        b := make([]byte, 32*1024)
+        n, err := server.Read(b)
+        if err != nil {
+            log.Println(err)
+            client.Close()
+            server.Close()
+            return
+        }
+        if string(b[:34]) != "HTTP/1.1 101 Switching Protocols\r\n" {
+            log.Println(string(b[:n]))
+            client.Close()
+            server.Close()
+            return
+        }
+    }
+    if c.ConnectMode {
+        _, err := server.Write(connproxy)
+        if err != nil {
+            log.Println(err)
+            client.Close()
+            server.Close()
+            return
+        }
+        b := make([]byte, 32*1024)
+        n, err := server.Read(b)
+        if err != nil {
+            log.Println(err)
+            client.Close()
+            server.Close()
+            return
+        }
+        if string(b[:37]) != "HTTP/1.1 200 Connection established\r\n" {
+            log.Println(string(b[:n]))
+            client.Close()
+            server.Close()
+            return
+        }
+    }
+
+    go IoCopy(client, server)
+    go IoCopy(server, client)
 }
 
 func IoCopy(dst net.Conn, src net.Conn) {
-    io.Copy(dst, src)
-    dst.Close()
-}
-
-func IoCopy1(dst net.Conn, src *tls.Conn) {
-    io.Copy(dst, src)
-    dst.Close()
-}
-
-func IoCopy2(dst *tls.Conn, src net.Conn) {
     io.Copy(dst, src)
     dst.Close()
 }
