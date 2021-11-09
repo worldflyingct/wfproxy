@@ -59,21 +59,24 @@ func initconfigdata () int {
     path := obj["path"].(string)
     key := obj["key"].(string)
     targetaddr := obj["targetaddr"].(string)
+    colon := strings.Index(c.ServerAddr, ":")
     if c.NeedAuth {
         var serveraddr string
-        colon := strings.Index(c.ServerAddr, ":")
         if colon == -1 {
             serveraddr = c.ServerAddr
-            if c.Ssl {
-                c.ServerAddr += ":443"
-            } else {
-                c.ServerAddr += ":80"
-            }
         } else {
             serveraddr = c.ServerAddr[:strings.Index(c.ServerAddr, ":")]
         }
         auth = []byte("GET " + path + " HTTP/1.1\r\nHost: " + serveraddr + "\r\nConnection: Upgrade\r\nPragma: no-cache\r\nCache-Control: no-cache\r\nUpgrade: websocket\r\nAuthorization: " + key + "\r\n\r\n")
         authlen = len(auth)
+    }
+    if colon == -1 {
+        serveraddr = c.ServerAddr
+        if c.Ssl {
+            c.ServerAddr += ":443"
+        } else {
+            c.ServerAddr += ":80"
+        }
     }
     if c.ConnectMode {
         connproxy = []byte("CONNECT " + targetaddr + " HTTP/1.1\r\nHost: " + targetaddr + "\r\nProxy-Connection: keep-alive\r\n\r\n")
@@ -170,9 +173,6 @@ func ProxyRequest (client net.Conn) {
         go IoCopy1(client, server)
         go IoCopy2(server, client)
     } else {
-        if strings.Index(c.ServerAddr, ":") == -1 {
-            c.ServerAddr += ":80"
-        }
         server, err := net.Dial("tcp", c.ServerAddr)
         if err != nil {
             log.Println(err)
