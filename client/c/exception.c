@@ -116,12 +116,36 @@ void handle_proc_sig(int signo) {
     exit(0);
 }
 
-void ListenAllSig () {
+void ListenSig () {
     setvbuf(stdout, NULL, _IONBF, 0);
     memset(funcnametracestr, 0, sizeof(funcnametracestr));
     for (int i = 1 ; i <= 31 ; i++) {
         signal(i, handle_proc_sig);
     }
+}
+
+#else
+
+#include <stdio.h>
+#include <signal.h>
+
+void handle_proc_sig(int signo) {
+    if( signo == MANPROCSIG_PIPE ) {
+        printf(" Broken pipe (POSIX). \r\n");
+        return;
+    } else if( signo == MANPROCSIG_CLD ) {
+        printf(" Same as SIGCHLD (System V). \r\n");
+		return;
+    } else if( signo == MANPROCSIG_TSTP ) {
+        printf(" Keyboard stop (POSIX). \r\n");
+		return;
+	}
+}
+
+void ListenSig () {
+    signal(MANPROCSIG_PIPE, handle_proc_sig);
+    signal(MANPROCSIG_CLD, handle_proc_sig);
+    signal(MANPROCSIG_TSTP, handle_proc_sig);
 }
 
 #endif

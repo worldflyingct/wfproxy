@@ -88,12 +88,13 @@ int main () {
     while (1) {
         int pid = fork();
         if (pid == 0) { // work thread
-            ListenAllSig();
+            ListenSig();
             return work();
         }
         wait(NULL);
     }
 #else
+    ListenSig();
     return work();
 #endif
 }

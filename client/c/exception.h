@@ -1,9 +1,7 @@
 #ifndef EXCEPTION_H_
 #define EXCEPTION_H_
 
-#define DEBUG
-
-#ifdef DEBUG
+// #define DEBUG
 
 // MANPROCSIGnals.
 #define MANPROCSIG_HUP  1 // Hangup (POSIX).
@@ -42,9 +40,10 @@
 #define MANPROCSIG_SYS  31 // Bad system call.
 #define MANPROCSIG_UNUSED 31
 
+#ifdef DEBUG
 void addTrace(const char *funcname, int size);
-void ListenAllSig();
-
 #endif
+
+void ListenSig();
 
 #endif
