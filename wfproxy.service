@@ -1,0 +1,14 @@
+#将本文件放到/etc/systemd/system目录下，然后就可以通过systemctl命令控制该程序了。
+[Unit]
+Description=Wfproxy Server Service
+After=network.target
+
+[Service]
+User=nobody
+Restart=on-failure
+WorkingDirectory=/etc/wfproxy
+ExecStart=/etc/wfproxy/wfproxy
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
