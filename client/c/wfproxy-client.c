@@ -216,7 +216,7 @@ int work () {
             }
         }
         while (remainfdclienthead) {
-            FDCLIENT *tmp = remainfdclienthead;
+            struct FDCLIENT *tmp = remainfdclienthead;
             remainfdclienthead = remainfdclienthead->outclient;
             if (tmp->fullsize > 0) {
                 free(tmp->data);
