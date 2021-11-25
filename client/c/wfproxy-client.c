@@ -218,7 +218,9 @@ int work () {
         while (remainfdclienthead) {
             FDCLIENT *tmp = remainfdclienthead;
             remainfdclienthead = remainfdclienthead->outclient;
-            free(tmp->data);
+            if (tmp->fullsize > 0) {
+                free(tmp->data);
+            }
             free(tmp);
         }
     }
