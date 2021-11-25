@@ -215,9 +215,12 @@ int work () {
                 }
             }
         }
-    }
-    if (ctx != NULL) {
-        SSL_CTX_free(ctx);
+        while (remainfdclienthead) {
+            FDCLIENT *tmp = remainfdclienthead;
+            remainfdclienthead = remainfdclienthead->outclient;
+            free(tmp->data);
+            free(tmp);
+        }
     }
     return 0;
 }
