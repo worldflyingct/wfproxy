@@ -45,7 +45,8 @@ struct FDCLIENT {
                 "  \"bindport\": 1080,\n" \
                 "  \"serveraddr\": \"proxyserver:443\",\n" \
                 "  \"needauth\": false,\n" \
-                "  \"path\": \"/\",\n" \
+                "  \"httphost\": \"localhost\",\n" \
+                "  \"httppath\": \"/\",\n" \
                 "  \"key\": \"65f5bb36-8a0a-4be4-b0d0-18dee527b2d8\",\n" \
                 "  \"connectmode\": false,\n" \
                 "  \"targetaddr\": \"targetserver:443\"\n" \
@@ -857,8 +858,10 @@ int initconfigdata () {
     item = cJSON_GetObjectItem(obj, "needauth");
     c.needauth = cJSON_IsTrue(item);
     if (c.needauth) {
-        item = cJSON_GetObjectItem(obj, "path");
-        char *path = cJSON_GetStringValue(item);
+        item = cJSON_GetObjectItem(obj, "httphost");
+        char *httphost = cJSON_GetStringValue(item);
+        item = cJSON_GetObjectItem(obj, "httppath");
+        char *httppath = cJSON_GetStringValue(item);
         item = cJSON_GetObjectItem(obj, "key");
         char *key = cJSON_GetStringValue(item);
         char *head = (char*)malloc(HEADSIZE);
@@ -869,7 +872,7 @@ int initconfigdata () {
             return -7;
         }
         unsigned short len = sprintf(head, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nPragma: no-cache\r\nCache-Control: no-cache\r\nUpgrade: websocket\r\nAuthorization: %s\r\n\r\n",
-                    path, serveraddr, key);
+                    httppath, httphost, key);
         auth = (char*)malloc(len);
         if (auth == NULL) {
             perror("malloc fail");
